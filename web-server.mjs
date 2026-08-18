@@ -8,6 +8,11 @@ const types = { ".css": "text/css; charset=utf-8", ".html": "text/html; charset=
 
 createServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url || "/", "http://localhost").pathname);
+  if (pathname === "/up" || pathname === "/health") {
+    response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Content-Length": "2" });
+    response.end("OK");
+    return;
+  }
   const candidate = normalize(join(root, pathname));
   const safe = candidate.startsWith(root) && existsSync(candidate) && statSync(candidate).isFile() ? candidate : join(root, "index.html");
   response.setHeader("Content-Type", types[extname(safe)] || "application/octet-stream");
