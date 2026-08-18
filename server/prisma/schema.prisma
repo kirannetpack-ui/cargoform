@@ -1,0 +1,342 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ApplicationStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  CHANGES_REQUESTED
+  REJECTED
+  SUSPENDED
+}
+
+enum AccountType {
+  INDIVIDUAL
+  ORGANISATION
+}
+
+enum MembershipRole {
+  PLATFORM_ADMIN
+  OWNER
+  OPERATIONS
+  REVIEWER
+  FINANCE
+  CLIENT
+  READ_ONLY
+}
+
+enum ShipmentStatus {
+  DRAFT
+  CLIENT_SUBMITTED
+  CONFIRMED
+  DEPARTED
+  DELIVERED
+  CANCELLED
+}
+
+enum EmailStatus {
+  QUEUED
+  PROCESSING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+enum AuthTokenPurpose {
+  VERIFY_EMAIL
+  RESET_PASSWORD
+}
+
+model User {
+  id          String       @id @default(cuid())
+  email       String       @unique
+  displayName String
+  emailVerifiedAt DateTime?
+  disabledAt  DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  memberships Membership[]
+  messages    Message[]
+  notifications Notification[]
+  notificationPreferences NotificationPreference[]
+  credential  PasswordCredential?
+  sessions    AuthSession[]
+  authTokens  AuthToken[]
+  mfaTotp     MfaTotp?
+}
+
+model PasswordCredential {
+  userId       String @id
+  passwordHash String
+  changedAt    DateTime @default(now())
+  user         User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AuthSession {
+  id            String @id @default(cuid())
+  userId        String
+  tokenHash     String @unique
+  userAgentHash String?
+  ipHash        String?
+  expiresAt     DateTime
+  lastSeenAt    DateTime @default(now())
+  revokedAt     DateTime?
+  createdAt     DateTime @default(now())
+  user          User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, revokedAt, expiresAt])
+}
+
+model AuthToken {
+  id        String @id @default(cuid())
+  userId    String
+  purpose   AuthTokenPurpose
+  tokenHash String @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, purpose, usedAt, expiresAt])
+}
+
+model MfaTotp {
+  userId          String @id
+  encryptedSecret String
+  enabledAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Organisation {
+  id          String       @id @default(cuid())
+  legalName   String
+  panVat      String?
+  registrationNumber String?
+  status      ApplicationStatus @default(DRAFT)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  memberships Membership[]
+  applications MainUserApplication[]
+  clients     ClientAccount[]
+  shipments   Shipment[]
+  emailOutbox EmailOutbox[]
+  oauthCredentials OAuthCredential[]
+  chatThreads ChatThread[]
+  auditEvents AuditEvent[]
+  notificationPreferences NotificationPreference[]
+  files       FileObject[]
+}
+
+model FileObject {
+  id             String @id @default(cuid())
+  organisationId String
+  objectKey      String @unique
+  originalName   String
+  contentType    String
+  sizeBytes      BigInt
+  sha256         String
+  classification String
+  entityType     String
+  entityId       String
+  uploadedByUserId String
+  malwareStatus String @default("PENDING")
+  deletedAt      DateTime?
+  createdAt      DateTime @default(now())
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Restrict)
+  @@index([organisationId, entityType, entityId])
+  @@index([organisationId, deletedAt])
+}
+
+model Membership {
+  id             String @id @default(cuid())
+  userId         String
+  organisationId String
+  role           MembershipRole
+  createdAt      DateTime @default(now())
+  user           User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  @@unique([userId, organisationId])
+  @@index([organisationId, role])
+}
+
+model MainUserApplication {
+  id             String @id @default(cuid())
+  organisationId String
+  accountType    AccountType
+  applicantEmail String
+  payload        Json
+  status         ApplicationStatus @default(DRAFT)
+  submittedAt    DateTime?
+  reviewedAt     DateTime?
+  reviewerUserId String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  @@index([status, submittedAt])
+}
+
+model ClientAccount {
+  id             String @id @default(cuid())
+  organisationId String
+  name           String
+  email          String
+  active         Boolean @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  shipments      Shipment[]
+  @@unique([organisationId, email])
+}
+
+model Shipment {
+  id             String @id @default(cuid())
+  organisationId String
+  clientAccountId String?
+  documentNumber String?
+  invoiceNumber  String
+  status         ShipmentStatus @default(DRAFT)
+  shipmentData   Json
+  version        Int @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Restrict)
+  clientAccount  ClientAccount? @relation(fields: [clientAccountId], references: [id], onDelete: SetNull)
+  goods          GoodsItem[]
+  boxes          PackingBox[]
+  @@index([organisationId, status, updatedAt])
+}
+
+model GoodsItem {
+  id          String @id @default(cuid())
+  shipmentId  String
+  lineNumber  Int
+  description String
+  hsCode      String?
+  botanicalName String?
+  quantity    Decimal? @db.Decimal(18, 4)
+  unit        String?
+  grossWeightKg Decimal? @db.Decimal(18, 4)
+  netWeightKg Decimal? @db.Decimal(18, 4)
+  shipment    Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  @@unique([shipmentId, lineNumber])
+}
+
+model PackingBox {
+  id             String @id @default(cuid())
+  shipmentId     String
+  boxNumber      Int
+  lengthCm       Decimal @db.Decimal(18, 4)
+  widthCm        Decimal @db.Decimal(18, 4)
+  heightCm       Decimal @db.Decimal(18, 4)
+  actualWeightKg Decimal @db.Decimal(18, 4)
+  allocations    Json
+  shipment       Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  @@unique([shipmentId, boxNumber])
+}
+
+model OAuthCredential {
+  id             String @id @default(cuid())
+  organisationId String
+  provider       String
+  accountEmail   String
+  encryptedTokens String
+  scopes         String[]
+  expiresAt      DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  @@unique([organisationId, provider, accountEmail])
+}
+
+model EmailOutbox {
+  id             String @id @default(cuid())
+  organisationId String
+  eventKey       String @unique
+  fromEmail      String
+  toEmails       String[]
+  ccEmails       String[]
+  subject        String
+  textBody       String
+  status         EmailStatus @default(QUEUED)
+  attempts       Int @default(0)
+  nextAttemptAt  DateTime @default(now())
+  providerMessageId String?
+  lastError      String?
+  sentAt         DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Restrict)
+  @@index([status, nextAttemptAt])
+}
+
+model ChatThread {
+  id             String @id @default(cuid())
+  organisationId String
+  kind           String
+  participantKey String
+  createdAt      DateTime @default(now())
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  messages       Message[]
+  @@unique([organisationId, kind, participantKey])
+}
+
+model Message {
+  id        String @id @default(cuid())
+  threadId  String
+  senderId  String
+  body      String
+  createdAt DateTime @default(now())
+  thread    ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender    User @relation(fields: [senderId], references: [id], onDelete: Restrict)
+  @@index([threadId, createdAt])
+}
+
+model Notification {
+  id        String @id @default(cuid())
+  userId    String
+  eventKey  String
+  eventType String
+  category  String
+  title     String
+  detail    String
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, eventKey])
+  @@index([userId, readAt, createdAt])
+}
+
+model NotificationPreference {
+  id             String @id @default(cuid())
+  organisationId String
+  userId         String
+  eventType      String
+  emailEnabled   Boolean @default(true)
+  inAppEnabled   Boolean @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  user           User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([organisationId, userId, eventType])
+  @@index([organisationId, eventType])
+}
+
+model AuditEvent {
+  id             String @id @default(cuid())
+  organisationId String?
+  actorUserId    String?
+  action         String
+  entityType     String
+  entityId       String?
+  metadata       Json?
+  ipHash         String?
+  createdAt      DateTime @default(now())
+  organisation   Organisation? @relation(fields: [organisationId], references: [id], onDelete: SetNull)
+  @@index([organisationId, createdAt])
+}

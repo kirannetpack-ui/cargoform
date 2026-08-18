@@ -1,0 +1,36 @@
+name: CargoForm CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: cargoform_test
+          POSTGRES_USER: cargoform
+          POSTGRES_PASSWORD: cargoform
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cargoform"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: npm audit --omit=dev
+      - run: npm ci
+        working-directory: server
+      - run: npm run prisma:generate
+        working-directory: server
+        env:
+          DATABASE_URL: postgresql://cargoform:cargoform@localhost:5432/cargoform_test
+      - run: npm run build
+        working-directory: server
+      - run: npm test
+        working-directory: server

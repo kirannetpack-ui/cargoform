@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "CargoForm Logistics Workspace",
+  "short_name": "CargoForm",
+  "description": "Create, review and manage logistics and Nepal export documents.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f6f5",
+  "theme_color": "#173d3f",
+  "orientation": "any",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "New shipment", "short_name": "Shipment", "url": "/?section=shipment" },
+    { "name": "Documents", "short_name": "Documents", "url": "/?section=documents" }
+  ]
+}

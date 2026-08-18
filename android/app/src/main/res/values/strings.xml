@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CargoForm</string>
+    <string name="title_activity_main">CargoForm</string>
+    <string name="package_name">com.cargoform.logistics</string>
+    <string name="custom_url_scheme">com.cargoform.logistics</string>
+</resources>
