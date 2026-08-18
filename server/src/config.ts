@@ -26,4 +26,27 @@ const schema = z.object({
   AUTH_TOKEN_TTL_MINUTES: z.coerce.number().int().min(10).max(120).default(30),
 });
 
-export const config = schema.parse(process.env);
+function databaseUrl(env: NodeJS.ProcessEnv) {
+  if (env.DATABASE_URL) return env.DATABASE_URL;
+  if (!env.DB_HOST || !env.DB_DATABASE || !env.DB_USERNAME || env.DB_PASSWORD == null) return undefined;
+  const port = env.DB_PORT || "5432";
+  return `postgresql://${encodeURIComponent(env.DB_USERNAME)}:${encodeURIComponent(env.DB_PASSWORD)}@${env.DB_HOST}:${port}/${encodeURIComponent(env.DB_DATABASE)}?schema=public`;
+}
+
+// Laravel Cloud injects DB_* and AWS_* resource variables. Normalize those
+// standard names here so the application remains portable and Prisma still
+// receives its conventional DATABASE_URL.
+const resolvedDatabaseUrl = databaseUrl(process.env);
+if (resolvedDatabaseUrl) process.env.DATABASE_URL = resolvedDatabaseUrl;
+
+const normalized = {
+  ...process.env,
+  DATABASE_URL: resolvedDatabaseUrl,
+  OBJECT_STORAGE_ENDPOINT: process.env.OBJECT_STORAGE_ENDPOINT || process.env.AWS_ENDPOINT,
+  OBJECT_STORAGE_REGION: process.env.OBJECT_STORAGE_REGION || process.env.AWS_DEFAULT_REGION || process.env.AWS_REGION,
+  OBJECT_STORAGE_BUCKET: process.env.OBJECT_STORAGE_BUCKET || process.env.AWS_BUCKET,
+  OBJECT_STORAGE_ACCESS_KEY: process.env.OBJECT_STORAGE_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID,
+  OBJECT_STORAGE_SECRET_KEY: process.env.OBJECT_STORAGE_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY,
+};
+
+export const config = schema.parse(normalized);
