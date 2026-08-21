@@ -32,6 +32,14 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get("/", (_req, res) => res.json({
+  service: "CargoForm API",
+  status: "online",
+  health: {
+    live: "/health/live",
+    ready: "/health/ready",
+  },
+}));
 app.get("/health/live", (_req, res) => res.json({ status: "ok" }));
 app.get("/health/ready", async (_req, res) => {
   try { await db.$queryRaw`SELECT 1`; res.json({ status: "ready" }); }
