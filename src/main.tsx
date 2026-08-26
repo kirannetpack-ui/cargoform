@@ -28,7 +28,7 @@ import {
 import "./styles.css";
 
 type DocType =
-  "MAWB" | "BILL_OF_LADING" | "COO" | "COMMERCIAL_INVOICE" | "PACKING_LIST" | "PHYTOSANITARY";
+  "MAWB" | "HAWB" | "BILL_OF_LADING" | "COO" | "COMMERCIAL_INVOICE" | "PACKING_LIST" | "PHYTOSANITARY";
 type Destination = "US" | "UK" | "EU" | "CA" | "AU" | "GULF" | "CN" | "IN";
 type Goods = {
   description: string;
@@ -57,6 +57,9 @@ type FormData = {
   carrier: string;
   carrierCode: string;
   documentNo: string;
+  hawbNumber: string;
+  hawbNumberFormat: string;
+  hawbIssuerName: string;
   trackingUrl: string;
   operationsUrl: string;
   flightVoyage: string;
@@ -197,6 +200,9 @@ const initial: FormData = {
   carrier: "To be assigned",
   carrierCode: "",
   documentNo: "",
+  hawbNumber: "HCE-2026-0001",
+  hawbNumberFormat: "HAWB-{YYYY}-{####}",
+  hawbIssuerName: "",
   trackingUrl: "",
   operationsUrl: "",
   flightVoyage: "To be assigned",
@@ -657,14 +663,17 @@ const Cell = ({
   </div>
 );
 
-function AwbForm({ d, lines, boxes, divisor }: { d: FormData; lines: Goods[]; boxes: PackingBox[]; divisor: number }) {
+function AwbForm({ d, lines, boxes, divisor, houseIssuerName }: { d: FormData; lines: Goods[]; boxes: PackingBox[]; divisor: number; houseIssuerName?: string }) {
   const totals = shipmentMetrics(boxes, lines, divisor);
+  const isHawb = Boolean(houseIssuerName);
+  const awbNumber = isHawb ? d.hawbNumber : d.documentNo;
+  const issuer = houseIssuerName || d.carrier;
   return (
     <div className="official-form awb-form">
-      <div className="awb-no top">{d.documentNo || "___ — __________"}</div>
+      <div className="awb-no top">{awbNumber || (isHawb ? "HOUSE AWB NUMBER" : "___ — __________")}</div>
       <div className="form-title">
-        <span>Issued by / Airline copy</span>
-        <h2>AIR WAYBILL</h2>
+        <span>{isHawb ? "Issued by / House air waybill copy" : "Issued by / Airline copy"}</span>
+        <h2>{isHawb ? "HOUSE AIR WAYBILL" : "AIR WAYBILL"}</h2>
         <b>Not Negotiable</b>
       </div>
       <div className="form-grid two">
@@ -673,10 +682,10 @@ function AwbForm({ d, lines, boxes, divisor }: { d: FormData; lines: Goods[]; bo
           <br />
           {d.exporterAddress}
         </Cell>
-        <Cell label="Air Waybill issued by">
-          <b>{d.carrier}</b>
+        <Cell label={isHawb ? "House Air Waybill issued by" : "Air Waybill issued by"}>
+          <b>{issuer}</b>
           <br />
-          Carrier address / logo applied by issuing carrier
+          {isHawb ? "Main User / client name and address applied by issuer" : "Carrier address / logo applied by issuing carrier"}
         </Cell>
         <Cell label="Consignee's Name and Address">
           <b>{d.consigneeName}</b>
@@ -755,7 +764,7 @@ function AwbForm({ d, lines, boxes, divisor }: { d: FormData; lines: Goods[]; bo
         <span>Executed on (date) at (place)</span>
         <span>Signature of Issuing Carrier or its Agent</span>
       </div>
-      <div className="awb-no bottom">{d.documentNo || "___ — __________"}</div>
+      <div className="awb-no bottom">{awbNumber || (isHawb ? "HOUSE AWB NUMBER" : "___ — __________")}</div>
     </div>
   );
 }
@@ -1554,10 +1563,7 @@ function PhytosanitaryCertificate({ d, lines }: { d: FormData; lines: Goods[] })
 function App() {
   const [data, setData] = useState<FormData>(() => {
     try {
-      return (
-        JSON.parse(localStorage.getItem("cargoform.v3.shipment") || "null") ||
-        initial
-      );
+      return { ...initial, ...(JSON.parse(localStorage.getItem("cargoform.v3.shipment") || "null") || {}) };
     } catch {
       return initial;
     }
@@ -1656,6 +1662,10 @@ function App() {
   const [emailConfig, setEmailConfig] = useState(() => { try { return JSON.parse(localStorage.getItem("cargoform.v8.emailConfig") || "null") || { sender: "app.netpack@gmail.com", adminRecipient: "app.netpack@gmail.com", provider: "Gmail OAuth", connected: false }; } catch { return { sender: "app.netpack@gmail.com", adminRecipient: "app.netpack@gmail.com", provider: "Gmail OAuth", connected: false }; } });
   const [emailOutbox, setEmailOutbox] = useState<OutboundEmail[]>(() => { try { return JSON.parse(localStorage.getItem("cargoform.v8.emailOutbox") || "[]"); } catch { return []; } });
   const goodsLines = [data.goods, ...extraGoods];
+  const houseIssuerName = data.hawbIssuerName.trim() ||
+    (profile.accountType === "ORGANISATION" ? profile.legalName : profile.fullName) ||
+    organisation.name || data.exporterName;
+  const activeDocumentNo = doc === "HAWB" ? data.hawbNumber : data.documentNo;
   const phyto = phytoAssessment(goodsLines);
   const totals = useMemo(
     () => shipmentMetrics(boxes, goodsLines, airDivisor),
@@ -1724,8 +1734,8 @@ function App() {
       e.push("Exporter and consignee are required.");
     if (!/^\d{4}(\.\d{2})?/.test(data.goods.hsCode))
       e.push("Enter at least a 4-digit HS code.");
-    if (doc === "MAWB" && !data.departure)
-      e.push("Departure airport is required for MAWB.");
+    if ((doc === "MAWB" || doc === "HAWB") && !data.departure)
+      e.push("Departure airport is required for air waybills.");
     if (
       doc === "MAWB" &&
       data.documentNo &&
@@ -1734,6 +1744,10 @@ function App() {
       e.push(
         "MAWB number should contain the 3-digit airline prefix and 8-digit serial/check number.",
       );
+    if (doc === "HAWB" && !data.hawbNumber.trim())
+      e.push("Enter a House Air Waybill number.");
+    if (doc === "HAWB" && !houseIssuerName.trim())
+      e.push("Enter the Main User or client name issuing the House Air Waybill.");
     if (doc === "BILL_OF_LADING" && (!data.loadingPort || !data.dischargePort))
       e.push("Loading and discharge ports are required.");
     if (
@@ -1758,7 +1772,7 @@ function App() {
       !data.goods.originCriterion
     )
       e.push("Origin criterion is required for a preferential proof.");
-    if ((doc === "MAWB" || doc === "BILL_OF_LADING") && boxes.length === 0)
+    if ((doc === "MAWB" || doc === "HAWB" || doc === "BILL_OF_LADING") && boxes.length === 0)
       e.push("Add packing boxes: pieces in transport documents come only from the packing record.");
     if (boxes.length > 0 && boxes.some((box) => box.actualWeightKg <= 0))
       e.push("Every packing box requires an actual weight before shipment confirmation.");
@@ -1766,7 +1780,7 @@ function App() {
     if (boxes.length > 0 && enteredGross > 0 && Math.abs(enteredGross - totals.actualKg) > 0.01)
       e.push(`Goods-line gross weight (${enteredGross.toFixed(2)} kg) does not match packing actual weight (${totals.actualKg.toFixed(2)} kg). Packing weight controls MAWB/B/L/email.`);
     return e;
-  }, [data, doc, rule, boxes, extraGoods, airDivisor, totals.actualKg]);
+  }, [data, doc, rule, boxes, extraGoods, airDivisor, totals.actualKg, houseIssuerName]);
   const set = (k: keyof FormData, v: string) =>
     setData((d) => {
       let next = { ...d, [k]: v };
@@ -1828,13 +1842,13 @@ function App() {
     const recipients = contacts
       .filter((c) => c.role === "CARRIER")
       .map((c) => c.email);
-    const subject = `${data.documentNo || "PENDING"} | ${data.destination} | ${totals.actualKg.toFixed(2)} kg | ${totals.pieces} boxes | ${data.consigneeName}`;
+    const subject = `${activeDocumentNo || "PENDING"} | ${data.destination} | ${totals.actualKg.toFixed(2)} kg | ${totals.pieces} boxes | ${data.consigneeName}`;
     setEmailDraft({
       to: recipients,
       cc: contacts.filter((c) => c.role === "MAIN_USER").map((c) => c.email),
       subject,
       documents: selectedDocs,
-      body: `Dear Cargo Operations,\n\nPlease find the shipment details for ${data.documentNo || "the pending transport document"}.\nCarrier: ${data.carrier}\nRouting: ${data.departure} to ${data.destination}\nConsignee: ${data.consigneeName}\nPieces: ${totals.pieces} boxes\nActual weight: ${totals.actualKg.toFixed(2)} kg\nVolumetric weight: ${totals.volumetricKg.toFixed(2)} kg\nChargeable weight: ${totals.chargeableKg.toFixed(2)} kg\nCBM: ${totals.cbm.toFixed(4)}\nGoods lines: ${goodsLines.length}\n\nSelected documents: ${selectedDocs.join(", ")}.\n\nPlease review and confirm.`,
+      body: `Dear Cargo Operations,\n\nPlease find the shipment details for ${activeDocumentNo || "the pending transport document"}.\nCarrier: ${data.carrier}\nRouting: ${data.departure} to ${data.destination}\nConsignee: ${data.consigneeName}\nPieces: ${totals.pieces} boxes\nActual weight: ${totals.actualKg.toFixed(2)} kg\nVolumetric weight: ${totals.volumetricKg.toFixed(2)} kg\nChargeable weight: ${totals.chargeableKg.toFixed(2)} kg\nCBM: ${totals.cbm.toFixed(4)}\nGoods lines: ${goodsLines.length}\n\nSelected documents: ${selectedDocs.join(", ")}.\n\nPlease review and confirm.`,
     });
   };
   const sendEmail = () => {
@@ -1930,6 +1944,8 @@ function App() {
   const title =
     doc === "MAWB"
       ? "MASTER AIR WAYBILL"
+      : doc === "HAWB"
+        ? "HOUSE AIR WAYBILL"
       : doc === "BILL_OF_LADING"
         ? "BILL OF LADING"
         : doc === "COMMERCIAL_INVOICE"
@@ -1951,6 +1967,16 @@ function App() {
           ["Flight / routing", data.flightVoyage],
           ["Charges", "Prepaid / collect — to be confirmed"],
         ]
+      : doc === "HAWB"
+        ? [
+            ["House AWB number", data.hawbNumber || "Pending"],
+            ["House AWB issuer", houseIssuerName],
+            ["Number format", data.hawbNumberFormat || "Free-form"],
+            ["Underlying carrier", data.carrier],
+            ["Airport of departure", data.departure],
+            ["Airport of destination", data.destination],
+            ["Flight / routing", data.flightVoyage],
+          ]
       : doc === "BILL_OF_LADING"
         ? [
             ["Port of loading", data.loadingPort],
@@ -2042,7 +2068,7 @@ function App() {
     });
     saveAs(
       await Packer.toBlob(d),
-      `${doc.toLowerCase()}-${data.invoiceNo}.docx`,
+      `${doc.toLowerCase()}-${activeDocumentNo || data.invoiceNo}.docx`,
     );
   }
   const saveShipmentSnapshot = (nextStatus: ShipmentStatus = status) => {
@@ -2108,7 +2134,7 @@ function App() {
       return <section className="module-page"><div className="module-head"><div><p className="eyebrow">ACCOUNTS</p><h2>{activeSection}</h2><small>{activeSection === "Clients" ? "Client accounts submit only to their owning Main User." : activeSection === "Staffs" ? "Staff permissions remain inside this Main User organisation." : "Carrier contacts receive only reviewed Main User submissions."}</small></div><button onClick={() => { setContactRole(role); setActiveSection("Shipment data"); }}>Add from shipment workspace</button></div>{items.length === 0 ? <div className="empty-state">No {activeSection.toLowerCase()} added.</div> : <div className="record-list">{items.map((item) => <div className="record-editor" key={item.id}><input value={item.name} onChange={(e) => updateContact(item.id,{name:e.target.value})}/><input type="email" value={item.email} onChange={(e) => updateContact(item.id,{email:e.target.value})}/><select value={item.status} onChange={(e) => updateContact(item.id,{status:e.target.value as Contact["status"]})}><option>ACTIVE</option><option>INVITED</option><option>PENDING_REVIEW</option></select><button onClick={() => removeContact(item.id)}>Delete</button></div>)}</div>}</section>;
     }
     if (activeSection === "Documents") {
-      const docs: [DocType,string][] = [["MAWB","Master Air Waybill"],["BILL_OF_LADING","Bill of Lading"],["COO","Certificate of Origin"],["COMMERCIAL_INVOICE","Commercial Invoice"],["PACKING_LIST","Packing List"],["PHYTOSANITARY","Phytosanitary Certificate"]];
+      const docs: [DocType,string][] = [["MAWB","Master Air Waybill"],["HAWB","House Air Waybill"],["BILL_OF_LADING","Bill of Lading"],["COO","Certificate of Origin"],["COMMERCIAL_INVOICE","Commercial Invoice"],["PACKING_LIST","Packing List"],["PHYTOSANITARY","Phytosanitary Certificate"]];
       return <section className="module-page"><div className="module-head"><div><p className="eyebrow">TEMPLATES</p><h2>Documents</h2></div></div><div className="module-cards">{docs.map(([kind,name]) => <button key={kind} onClick={() => openDocument(kind)}><FileText/><b>{name}</b><small>Open editable A4 draft</small></button>)}</div></section>;
     }
     if (activeSection === "Billing & payments") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">FINANCE</p><h2>Billing & payments</h2><small>Platform subscription ledger. Client freight invoices remain a separate Main User ledger.</small></div><button onClick={addBillingRecord}>New invoice</button></div><div className="payment-options"><b>Payment priority</b><span>Bank transfer / connectIPS · eSewa ePay · Khalti</span></div>{billing.length === 0 ? <div className="empty-state">No billing records.</div> : <div className="record-list">{billing.map((item) => <div className="record-editor billing-row" key={item.id}><input value={item.reference} onChange={(e) => setBilling((all)=>all.map((x)=>x.id===item.id?{...x,reference:e.target.value}:x))}/><input value={item.party} onChange={(e) => setBilling((all)=>all.map((x)=>x.id===item.id?{...x,party:e.target.value}:x))}/><input type="number" value={item.amount} onChange={(e) => setBilling((all)=>all.map((x)=>x.id===item.id?{...x,amount:Number(e.target.value)}:x))}/><select value={item.status} onChange={(e)=>setBilling((all)=>all.map((x)=>x.id===item.id?{...x,status:e.target.value as BillingRecord["status"]}:x))}><option>DRAFT</option><option>ISSUED</option><option>PAID</option><option>VOID</option></select><button onClick={()=>setBilling((all)=>all.filter((x)=>x.id!==item.id))}>Delete</button></div>)}</div>}</section>;
@@ -2175,6 +2201,13 @@ function App() {
             MAWB<small>Air cargo</small>
           </button>
           <button
+            className={doc === "HAWB" ? "selected" : ""}
+            onClick={() => setDoc("HAWB")}
+          >
+            <Plane />
+            HAWB<small>House air cargo</small>
+          </button>
+          <button
             className={doc === "BILL_OF_LADING" ? "selected" : ""}
             onClick={() => setDoc("BILL_OF_LADING")}
           >
@@ -2213,7 +2246,7 @@ function App() {
         <section className="shipment-control">
           <div>
             <p className="eyebrow">SHIPMENT LIFECYCLE</p>
-            <b>{data.documentNo || "Unnumbered shipment"}</b>
+            <b>{activeDocumentNo || "Unnumbered shipment"}</b>
             <span className={`status ${status.toLowerCase()}`}>{status}</span>
           </div>
           <div className="lifecycle-actions">
@@ -2222,7 +2255,7 @@ function App() {
             </button>
             <button
               onClick={() => { setStatus("CONFIRMED"); saveShipmentSnapshot("CONFIRMED"); }}
-              disabled={locked || !data.documentNo}
+              disabled={locked || !activeDocumentNo}
             >
               Confirm shipment
             </button>
@@ -2255,7 +2288,9 @@ function App() {
                   {data.carrierCode} · Automatically suggested from{" "}
                   {doc === "MAWB"
                     ? "IATA accounting prefix"
-                    : "known carrier/SCAC-style prefix"}
+                    : doc === "HAWB"
+                      ? "house issuer selected by the Main User"
+                      : "known carrier/SCAC-style prefix"}
                   ; always verify and edit.
                 </small>
               </span>
@@ -2432,6 +2467,7 @@ function App() {
             <div className="doc-checks">
               {[
                 "MAWB / B/L",
+                "House Air Waybill",
                 "Certificate of Origin",
                 "Commercial Invoice",
                 "Packing List",
@@ -2523,6 +2559,36 @@ function App() {
                 </div>
               </fieldset>
             ))}
+            {doc === "HAWB" && (
+              <fieldset>
+                <legend>House Air Waybill control</legend>
+                <div className="grid">
+                  <label className="wide">
+                    HAWB issued by
+                    <input
+                      disabled={locked}
+                      value={data.hawbIssuerName}
+                      placeholder={houseIssuerName}
+                      onChange={(e) => set("hawbIssuerName", e.target.value)}
+                    />
+                    <small className="field-help">
+                      Defaults to the Main User’s organisation or legal name. Enter an approved client company or person only when they are the house issuer.
+                    </small>
+                  </label>
+                  <label>
+                    HAWB number
+                    <input disabled={locked} value={data.hawbNumber} onChange={(e) => set("hawbNumber", e.target.value)} />
+                  </label>
+                  <label>
+                    Number format / pattern
+                    <input disabled={locked} value={data.hawbNumberFormat} onChange={(e) => set("hawbNumberFormat", e.target.value)} />
+                    <small className="field-help">
+                      You control this internal pattern. Optional conventions include {'{YYYY}'}, {'{YY}'} and {'{####}'}; the issued number always remains editable.
+                    </small>
+                  </label>
+                </div>
+              </fieldset>
+            )}
             <fieldset>
               <legend>
                 Goods & details · {goodsLines.length} line
@@ -2904,6 +2970,8 @@ function App() {
               <div className="draft-ribbon">DRAFT · NOT ISSUED</div>
               {doc === "MAWB" ? (
                 <AwbForm d={data} lines={goodsLines} boxes={boxes} divisor={airDivisor} />
+              ) : doc === "HAWB" ? (
+                <AwbForm d={data} lines={goodsLines} boxes={boxes} divisor={airDivisor} houseIssuerName={houseIssuerName} />
               ) : doc === "BILL_OF_LADING" ? (
                 <BlForm d={data} lines={goodsLines} boxes={boxes} divisor={airDivisor} />
               ) : doc === "COMMERCIAL_INVOICE" ? (
