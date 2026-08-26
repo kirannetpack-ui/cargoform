@@ -8,9 +8,21 @@ const types = { ".css": "text/css; charset=utf-8", ".html": "text/html; charset=
 
 createServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url || "/", "http://localhost").pathname);
-  if (pathname === "/up" || pathname === "/health") {
-    response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Content-Length": "2" });
-    response.end("OK");
+  if (pathname === "/" || pathname === "/up" || pathname === "/health") {
+    if (pathname === "/up" || pathname === "/health") {
+      response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Content-Length": "2" });
+      response.end("OK");
+      return;
+    }
+  }
+  if (!existsSync(join(root, "index.html"))) {
+    response.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" });
+    response.end("Application assets are unavailable");
+    return;
+  }
+  if (request.method === "HEAD") {
+    response.writeHead(200);
+    response.end();
     return;
   }
   const candidate = normalize(join(root, pathname));

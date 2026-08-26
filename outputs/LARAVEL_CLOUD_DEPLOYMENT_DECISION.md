@@ -10,6 +10,8 @@ Retain the React/PWA user interface and port the API, background email/notificat
 
 No deployment should be attempted by disguising the Node service as Laravel or by exposing a localhost API URL in a production frontend.
 
+The repository now includes a root `Dockerfile` for the React/Vite PWA. Configure the Laravel Cloud frontend application to build from the repository root and use the generated application domain for browser access. Configure the API application separately with `server/Dockerfile` and set the frontend build variable `VITE_API_BASE_URL` to the deployed API URL.
+
 ## External setup required
 
 1. Sign in to GitHub in the browser and create a private repository named `cargoform` under `kirannetpack-ui`.
