@@ -14,5 +14,5 @@ WORKDIR /app
 COPY --from=build /app/dist ./dist
 COPY web-server.mjs ./web-server.mjs
 
-EXPOSE 3000
+EXPOSE 8080
 CMD ["node", "web-server.mjs"]

@@ -8,8 +8,8 @@ const types = { ".css": "text/css; charset=utf-8", ".html": "text/html; charset=
 
 createServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url || "/", "http://localhost").pathname);
-  if (pathname === "/" || pathname === "/up" || pathname === "/health") {
-    if (pathname === "/up" || pathname === "/health") {
+  if (pathname === "/" || pathname === "/up" || pathname === "/health" || pathname === "/health/live" || pathname === "/health/ready") {
+    if (pathname !== "/") {
       response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Content-Length": "2" });
       response.end("OK");
       return;
