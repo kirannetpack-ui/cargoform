@@ -571,6 +571,7 @@ label {
 }
 input,
 textarea,
+.grid select,
 .hs-selector select {
   display: block;
   width: 100%;
@@ -585,6 +586,7 @@ textarea,
 }
 input:focus,
 textarea:focus,
+.grid select:focus,
 .hs-selector select:focus {
   border-color: #4c8982;
   box-shadow: 0 0 0 2px #d7e9e5;

@@ -28,7 +28,7 @@ import {
 import "./styles.css";
 
 type DocType =
-  "MAWB" | "HAWB" | "BILL_OF_LADING" | "COO" | "COMMERCIAL_INVOICE" | "PACKING_LIST" | "PHYTOSANITARY";
+  "MAWB" | "HAWB" | "BILL_OF_LADING" | "HBL" | "COO" | "COMMERCIAL_INVOICE" | "PACKING_LIST" | "PHYTOSANITARY";
 type Destination = "US" | "UK" | "EU" | "CA" | "AU" | "GULF" | "CN" | "IN";
 type Goods = {
   description: string;
@@ -60,6 +60,11 @@ type FormData = {
   hawbNumber: string;
   hawbNumberFormat: string;
   hawbIssuerName: string;
+  hblNumber: string;
+  hblNumberFormat: string;
+  hblIssuerName: string;
+  hblReleaseType: string;
+  hblOriginals: string;
   trackingUrl: string;
   operationsUrl: string;
   flightVoyage: string;
@@ -203,6 +208,11 @@ const initial: FormData = {
   hawbNumber: "HCE-2026-0001",
   hawbNumberFormat: "HAWB-{YYYY}-{####}",
   hawbIssuerName: "",
+  hblNumber: "HBL-2026-0001",
+  hblNumberFormat: "HBL-{YYYY}-{####}",
+  hblIssuerName: "",
+  hblReleaseType: "ORIGINAL — NEGOTIABLE",
+  hblOriginals: "THREE (3)",
   trackingUrl: "",
   operationsUrl: "",
   flightVoyage: "To be assigned",
@@ -769,19 +779,22 @@ function AwbForm({ d, lines, boxes, divisor, houseIssuerName }: { d: FormData; l
   );
 }
 
-function BlForm({ d, lines, boxes, divisor }: { d: FormData; lines: Goods[]; boxes: PackingBox[]; divisor: number }) {
+function BlForm({ d, lines, boxes, divisor, houseIssuerName }: { d: FormData; lines: Goods[]; boxes: PackingBox[]; divisor: number; houseIssuerName?: string }) {
   const totals = shipmentMetrics(boxes, lines, divisor);
+  const isHouse = Boolean(houseIssuerName);
+  const billNumber = isHouse ? d.hblNumber : d.documentNo;
   return (
     <div className="official-form bl-form">
       <div className="bl-head">
         <div>
-          <small>Carrier / NVOCC name and address</small>
-          <b>{d.carrier}</b>
+          <small>{isHouse ? "Freight forwarder / NVOCC issuing this house bill" : "Carrier / NVOCC name and address"}</small>
+          <b>{houseIssuerName || d.carrier}</b>
+          {isHouse && <span>Underlying ocean carrier: {d.carrier}</span>}
         </div>
         <div>
-          <h2>BILL OF LADING</h2>
-          <span>B/L No. {d.documentNo || "______________"}</span>
-          <b>ORIGINAL</b>
+          <h2>{isHouse ? "HOUSE BILL OF LADING" : "BILL OF LADING"}</h2>
+          <span>{isHouse ? "HBL" : "B/L"} No. {billNumber || "______________"}</span>
+          <b>{isHouse ? d.hblReleaseType : "ORIGINAL"}</b>
         </div>
       </div>
       <div className="form-grid two">
@@ -790,7 +803,8 @@ function BlForm({ d, lines, boxes, divisor }: { d: FormData; lines: Goods[]; box
           <br />
           {d.exporterAddress}
         </Cell>
-        <Cell label="Booking No. / Export References">
+        <Cell label={isHouse ? "Master B/L No. / Export References" : "Booking No. / Export References"}>
+          {isHouse && <>Master B/L: {d.documentNo || "Pending"}<br /></>}
           Invoice {d.invoiceNo}
         </Cell>
         <Cell label="Consignee (or order)">
@@ -798,8 +812,8 @@ function BlForm({ d, lines, boxes, divisor }: { d: FormData; lines: Goods[]; box
           <br />
           {d.consigneeAddress}
         </Cell>
-        <Cell label="Forwarding Agent / FMC Reference">
-          To be completed by carrier
+        <Cell label={isHouse ? "House Bill Issuer / Forwarder Reference" : "Forwarding Agent / FMC Reference"}>
+          {isHouse ? houseIssuerName : "To be completed by carrier"}
         </Cell>
         <Cell label="Notify Party">
           {d.notifyParty}
@@ -857,21 +871,21 @@ function BlForm({ d, lines, boxes, divisor }: { d: FormData; lines: Goods[]; box
           To be completed by carrier
         </Cell>
         <Cell label="Number of Original Bills of Lading">
-          THREE (3), unless carrier states otherwise
+          {isHouse ? d.hblOriginals : "THREE (3), unless carrier states otherwise"}
         </Cell>
         <Cell label="Place and Date of Issue">
           {d.loadingPort} · {d.invoiceDate}
         </Cell>
       </div>
       <p className="legal-small">
-        Received by the carrier from the shipper in apparent good order and
+        Received by the {isHouse ? "house bill issuer" : "carrier"} from the shipper in apparent good order and
         condition, except as noted, the goods described above for carriage
-        subject to the carrier's applicable bill of lading terms and conditions.
-        This draft is not a carrier-issued transport document.
+        subject to the {isHouse ? "issuing freight forwarder’s/NVOCC’s house bill terms and the underlying carrier contract" : "carrier's applicable bill of lading terms and conditions"}.
+        This draft is not an issued or transferable transport document.
       </p>
       <div className="signature-row">
         <span>Shipped on board date</span>
-        <span>For the Carrier — authorized signature</span>
+        <span>For the {isHouse ? "House Bill Issuer" : "Carrier"} — authorized signature</span>
       </div>
     </div>
   );
@@ -1665,7 +1679,10 @@ function App() {
   const houseIssuerName = data.hawbIssuerName.trim() ||
     (profile.accountType === "ORGANISATION" ? profile.legalName : profile.fullName) ||
     organisation.name || data.exporterName;
-  const activeDocumentNo = doc === "HAWB" ? data.hawbNumber : data.documentNo;
+  const houseBlIssuerName = data.hblIssuerName.trim() ||
+    (profile.accountType === "ORGANISATION" ? profile.legalName : profile.fullName) ||
+    organisation.name || data.exporterName;
+  const activeDocumentNo = doc === "HAWB" ? data.hawbNumber : doc === "HBL" ? data.hblNumber : data.documentNo;
   const phyto = phytoAssessment(goodsLines);
   const totals = useMemo(
     () => shipmentMetrics(boxes, goodsLines, airDivisor),
@@ -1712,7 +1729,7 @@ function App() {
     const match =
       doc === "MAWB"
         ? airCarriers[clean.slice(0, 3)]
-        : doc === "BILL_OF_LADING"
+        : doc === "BILL_OF_LADING" || doc === "HBL"
           ? oceanCarriers[clean.slice(0, 4)]
           : undefined;
     if (
@@ -1748,7 +1765,11 @@ function App() {
       e.push("Enter a House Air Waybill number.");
     if (doc === "HAWB" && !houseIssuerName.trim())
       e.push("Enter the Main User or client name issuing the House Air Waybill.");
-    if (doc === "BILL_OF_LADING" && (!data.loadingPort || !data.dischargePort))
+    if (doc === "HBL" && !data.hblNumber.trim())
+      e.push("Enter a House Bill of Lading number.");
+    if (doc === "HBL" && !houseBlIssuerName.trim())
+      e.push("Enter the freight forwarder, NVOCC, Main User or approved client issuing the House Bill of Lading.");
+    if ((doc === "BILL_OF_LADING" || doc === "HBL") && (!data.loadingPort || !data.dischargePort))
       e.push("Loading and discharge ports are required.");
     if (
       doc === "BILL_OF_LADING" &&
@@ -1759,7 +1780,7 @@ function App() {
         "Enter the full carrier Bill of Lading number; no universal B/L length applies.",
       );
     if (
-      (doc === "MAWB" || doc === "BILL_OF_LADING") &&
+      (doc === "MAWB" || doc === "BILL_OF_LADING" || doc === "HBL") &&
       data.documentNo &&
       !data.carrierCode
     )
@@ -1772,15 +1793,15 @@ function App() {
       !data.goods.originCriterion
     )
       e.push("Origin criterion is required for a preferential proof.");
-    if ((doc === "MAWB" || doc === "HAWB" || doc === "BILL_OF_LADING") && boxes.length === 0)
+    if ((doc === "MAWB" || doc === "HAWB" || doc === "BILL_OF_LADING" || doc === "HBL") && boxes.length === 0)
       e.push("Add packing boxes: pieces in transport documents come only from the packing record.");
     if (boxes.length > 0 && boxes.some((box) => box.actualWeightKg <= 0))
       e.push("Every packing box requires an actual weight before shipment confirmation.");
     const enteredGross = goodsLines.reduce((sum, line) => sum + numeric(line.grossWeight), 0);
     if (boxes.length > 0 && enteredGross > 0 && Math.abs(enteredGross - totals.actualKg) > 0.01)
-      e.push(`Goods-line gross weight (${enteredGross.toFixed(2)} kg) does not match packing actual weight (${totals.actualKg.toFixed(2)} kg). Packing weight controls MAWB/B/L/email.`);
+      e.push(`Goods-line gross weight (${enteredGross.toFixed(2)} kg) does not match packing actual weight (${totals.actualKg.toFixed(2)} kg). Packing weight controls MAWB/HAWB/B/L/HBL/email.`);
     return e;
-  }, [data, doc, rule, boxes, extraGoods, airDivisor, totals.actualKg, houseIssuerName]);
+  }, [data, doc, rule, boxes, extraGoods, airDivisor, totals.actualKg, houseIssuerName, houseBlIssuerName]);
   const set = (k: keyof FormData, v: string) =>
     setData((d) => {
       let next = { ...d, [k]: v };
@@ -1789,7 +1810,7 @@ function App() {
         const match =
           doc === "MAWB"
             ? airCarriers[clean.slice(0, 3)]
-            : doc === "BILL_OF_LADING"
+            : doc === "BILL_OF_LADING" || doc === "HBL"
               ? oceanCarriers[clean.slice(0, 4)]
               : undefined;
         if (match)
@@ -1948,6 +1969,8 @@ function App() {
         ? "HOUSE AIR WAYBILL"
       : doc === "BILL_OF_LADING"
         ? "BILL OF LADING"
+        : doc === "HBL"
+          ? "HOUSE BILL OF LADING"
         : doc === "COMMERCIAL_INVOICE"
           ? "COMMERCIAL INVOICE"
           : doc === "PACKING_LIST"
@@ -1985,6 +2008,18 @@ function App() {
             ["Notify party", data.notifyParty],
             ["Freight", "As arranged"],
           ]
+        : doc === "HBL"
+          ? [
+              ["House B/L number", data.hblNumber || "Pending"],
+              ["House B/L issuer", houseBlIssuerName],
+              ["Number format", data.hblNumberFormat || "Free-form"],
+              ["Release / negotiability", data.hblReleaseType],
+              ["Underlying master B/L", data.documentNo || "Pending"],
+              ["Underlying carrier", data.carrier],
+              ["Port of loading", data.loadingPort],
+              ["Port of discharge", data.dischargePort],
+              ["Vessel / voyage", data.flightVoyage],
+            ]
         : doc === "COMMERCIAL_INVOICE" || doc === "PACKING_LIST" || doc === "PHYTOSANITARY"
           ? [
               ["Invoice", `${data.invoiceNo} dated ${data.invoiceDate}`],
@@ -2134,7 +2169,7 @@ function App() {
       return <section className="module-page"><div className="module-head"><div><p className="eyebrow">ACCOUNTS</p><h2>{activeSection}</h2><small>{activeSection === "Clients" ? "Client accounts submit only to their owning Main User." : activeSection === "Staffs" ? "Staff permissions remain inside this Main User organisation." : "Carrier contacts receive only reviewed Main User submissions."}</small></div><button onClick={() => { setContactRole(role); setActiveSection("Shipment data"); }}>Add from shipment workspace</button></div>{items.length === 0 ? <div className="empty-state">No {activeSection.toLowerCase()} added.</div> : <div className="record-list">{items.map((item) => <div className="record-editor" key={item.id}><input value={item.name} onChange={(e) => updateContact(item.id,{name:e.target.value})}/><input type="email" value={item.email} onChange={(e) => updateContact(item.id,{email:e.target.value})}/><select value={item.status} onChange={(e) => updateContact(item.id,{status:e.target.value as Contact["status"]})}><option>ACTIVE</option><option>INVITED</option><option>PENDING_REVIEW</option></select><button onClick={() => removeContact(item.id)}>Delete</button></div>)}</div>}</section>;
     }
     if (activeSection === "Documents") {
-      const docs: [DocType,string][] = [["MAWB","Master Air Waybill"],["HAWB","House Air Waybill"],["BILL_OF_LADING","Bill of Lading"],["COO","Certificate of Origin"],["COMMERCIAL_INVOICE","Commercial Invoice"],["PACKING_LIST","Packing List"],["PHYTOSANITARY","Phytosanitary Certificate"]];
+      const docs: [DocType,string][] = [["MAWB","Master Air Waybill"],["HAWB","House Air Waybill"],["BILL_OF_LADING","Bill of Lading"],["HBL","House Bill of Lading"],["COO","Certificate of Origin"],["COMMERCIAL_INVOICE","Commercial Invoice"],["PACKING_LIST","Packing List"],["PHYTOSANITARY","Phytosanitary Certificate"]];
       return <section className="module-page"><div className="module-head"><div><p className="eyebrow">TEMPLATES</p><h2>Documents</h2></div></div><div className="module-cards">{docs.map(([kind,name]) => <button key={kind} onClick={() => openDocument(kind)}><FileText/><b>{name}</b><small>Open editable A4 draft</small></button>)}</div></section>;
     }
     if (activeSection === "Billing & payments") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">FINANCE</p><h2>Billing & payments</h2><small>Platform subscription ledger. Client freight invoices remain a separate Main User ledger.</small></div><button onClick={addBillingRecord}>New invoice</button></div><div className="payment-options"><b>Payment priority</b><span>Bank transfer / connectIPS · eSewa ePay · Khalti</span></div>{billing.length === 0 ? <div className="empty-state">No billing records.</div> : <div className="record-list">{billing.map((item) => <div className="record-editor billing-row" key={item.id}><input value={item.reference} onChange={(e) => setBilling((all)=>all.map((x)=>x.id===item.id?{...x,reference:e.target.value}:x))}/><input value={item.party} onChange={(e) => setBilling((all)=>all.map((x)=>x.id===item.id?{...x,party:e.target.value}:x))}/><input type="number" value={item.amount} onChange={(e) => setBilling((all)=>all.map((x)=>x.id===item.id?{...x,amount:Number(e.target.value)}:x))}/><select value={item.status} onChange={(e)=>setBilling((all)=>all.map((x)=>x.id===item.id?{...x,status:e.target.value as BillingRecord["status"]}:x))}><option>DRAFT</option><option>ISSUED</option><option>PAID</option><option>VOID</option></select><button onClick={()=>setBilling((all)=>all.filter((x)=>x.id!==item.id))}>Delete</button></div>)}</div>}</section>;
@@ -2215,6 +2250,13 @@ function App() {
             Bill of Lading<small>Sea cargo</small>
           </button>
           <button
+            className={doc === "HBL" ? "selected" : ""}
+            onClick={() => setDoc("HBL")}
+          >
+            <Ship />
+            HBL<small>House sea cargo</small>
+          </button>
+          <button
             className={doc === "COO" ? "selected" : ""}
             onClick={() => setDoc("COO")}
           >
@@ -2290,6 +2332,8 @@ function App() {
                     ? "IATA accounting prefix"
                     : doc === "HAWB"
                       ? "house issuer selected by the Main User"
+                      : doc === "HBL"
+                        ? "underlying master B/L carrier prefix"
                       : "known carrier/SCAC-style prefix"}
                   ; always verify and edit.
                 </small>
@@ -2468,6 +2512,7 @@ function App() {
               {[
                 "MAWB / B/L",
                 "House Air Waybill",
+                "House Bill of Lading",
                 "Certificate of Origin",
                 "Commercial Invoice",
                 "Packing List",
@@ -2551,7 +2596,7 @@ function App() {
                       {f.key === "documentNo" && (
                         <small className="field-help">
                           MAWB: enter 3-digit prefix + 8 digits. B/L: enter the
-                          full carrier document number.
+                          full carrier document number. For HBL, this field is the underlying master B/L number.
                         </small>
                       )}
                     </label>
@@ -2587,6 +2632,52 @@ function App() {
                     </small>
                   </label>
                 </div>
+              </fieldset>
+            )}
+            {doc === "HBL" && (
+              <fieldset>
+                <legend>House Bill of Lading control</legend>
+                <div className="grid">
+                  <label className="wide">
+                    HBL issued by
+                    <input
+                      disabled={locked}
+                      value={data.hblIssuerName}
+                      placeholder={houseBlIssuerName}
+                      onChange={(e) => set("hblIssuerName", e.target.value)}
+                    />
+                    <small className="field-help">
+                      Defaults to the Main User’s organisation or legal name. Use an approved freight forwarder, NVOCC or client identity only when that party is the actual house-bill issuer.
+                    </small>
+                  </label>
+                  <label>
+                    HBL number
+                    <input disabled={locked} value={data.hblNumber} onChange={(e) => set("hblNumber", e.target.value)} />
+                  </label>
+                  <label>
+                    Number format / pattern
+                    <input disabled={locked} value={data.hblNumberFormat} onChange={(e) => set("hblNumberFormat", e.target.value)} />
+                    <small className="field-help">
+                      The house issuer controls this pattern. The issued number remains editable.
+                    </small>
+                  </label>
+                  <label>
+                    Release / negotiability
+                    <select disabled={locked} value={data.hblReleaseType} onChange={(e) => set("hblReleaseType", e.target.value)}>
+                      <option>ORIGINAL — NEGOTIABLE</option>
+                      <option>NON-NEGOTIABLE</option>
+                      <option>SEA WAYBILL / EXPRESS RELEASE</option>
+                      <option>SURRENDERED</option>
+                    </select>
+                  </label>
+                  <label>
+                    Number of originals
+                    <input disabled={locked} value={data.hblOriginals} onChange={(e) => set("hblOriginals", e.target.value)} />
+                  </label>
+                </div>
+                <p className="privacy-note">
+                  This is a UN Layout Key-aligned house-bill draft. It is not a licensed FIATA FBL and becomes an issued transport document only through the authorized house issuer’s controlled terms, signature and release process.
+                </p>
               </fieldset>
             )}
             <fieldset>
@@ -2974,6 +3065,8 @@ function App() {
                 <AwbForm d={data} lines={goodsLines} boxes={boxes} divisor={airDivisor} houseIssuerName={houseIssuerName} />
               ) : doc === "BILL_OF_LADING" ? (
                 <BlForm d={data} lines={goodsLines} boxes={boxes} divisor={airDivisor} />
+              ) : doc === "HBL" ? (
+                <BlForm d={data} lines={goodsLines} boxes={boxes} divisor={airDivisor} houseIssuerName={houseBlIssuerName} />
               ) : doc === "COMMERCIAL_INVOICE" ? (
                 <CommercialInvoice d={data} lines={goodsLines} />
               ) : doc === "PACKING_LIST" ? (
@@ -3031,7 +3124,7 @@ function App() {
         </div>
         <footer>
           <Info size={14} /> This tool prepares drafts; it does not issue or
-          certify a COO, MAWB, or Bill of Lading. Carrier and
+          certify a COO, MAWB/HAWB, or carrier/house Bill of Lading. Carrier, house issuer and
           competent-authority approval remain required.
         </footer>
       </main>
