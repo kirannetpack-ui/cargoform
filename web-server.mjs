@@ -1,35 +1,31 @@
-import { createReadStream, existsSync, statSync } from "node:fs";
-import { createServer } from "node:http";
-import { extname, join, normalize } from "node:path";
+import express from "express";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
+const app = express();
 const root = join(process.cwd(), "dist");
+const index = join(root, "index.html");
 const port = Number(process.env.PORT || 8080);
-const types = { ".css": "text/css; charset=utf-8", ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
 
-createServer((request, response) => {
-  const pathname = decodeURIComponent(new URL(request.url || "/", "http://localhost").pathname);
-  if (pathname === "/" || pathname === "/up" || pathname === "/health" || pathname === "/health/live" || pathname === "/health/ready") {
-    if (pathname !== "/") {
-      response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Content-Length": "2" });
-      response.end("OK");
-      return;
-    }
-  }
-  if (!existsSync(join(root, "index.html"))) {
-    response.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" });
-    response.end("Application assets are unavailable");
-    return;
-  }
-  if (request.method === "HEAD") {
-    response.writeHead(200);
-    response.end();
-    return;
-  }
-  const candidate = normalize(join(root, pathname));
-  const safe = candidate.startsWith(root) && existsSync(candidate) && statSync(candidate).isFile() ? candidate : join(root, "index.html");
-  response.setHeader("Content-Type", types[extname(safe)] || "application/octet-stream");
+app.disable("x-powered-by");
+app.use((_request, response, next) => {
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   response.setHeader("X-Frame-Options", "DENY");
-  createReadStream(safe).pipe(response);
-}).listen(port, "0.0.0.0", () => console.log(`CargoForm web listening on ${port}`));
+  next();
+});
+
+app.get(["/up", "/health", "/health/live", "/health/ready"], (_request, response) => {
+  response.type("text/plain").send("OK");
+});
+
+app.use(express.static(root, { index: false }));
+app.use((_request, response) => {
+  if (!existsSync(index)) {
+    response.status(503).type("text/plain").send("Application assets are unavailable");
+    return;
+  }
+  response.sendFile(index);
+});
+
+app.listen(port, "0.0.0.0", () => console.log(`CargoForm web listening on ${port}`));
