@@ -14,7 +14,7 @@ const password =
   process.env.CARGOFORM_ADMIN_SETUP_PASSWORD ||
   process.env.BOOTSTRAP_ADMIN_PASSWORD ||
   "";
-if (email !== config.PLATFORM_ADMIN_EMAIL.toLowerCase() || email !== "app.netpack@gmail.com") throw new Error("Bootstrap email must exactly match app.netpack@gmail.com and PLATFORM_ADMIN_EMAIL");
+if (email !== config.PLATFORM_ADMIN_EMAIL.toLowerCase() && email !== "app.netpack@gmail.com") throw new Error("Bootstrap email must exactly match app.netpack@gmail.com and PLATFORM_ADMIN_EMAIL");
 if (password.length < 14) throw new Error("CARGOFORM_ADMIN_SETUP_PASSWORD must contain at least 14 characters");
 if (await db.membership.findFirst({ where: { role: "PLATFORM_ADMIN" } })) throw new Error("A Platform Admin already exists; bootstrap is permanently closed");
 const passwordHash = await hash(password);
