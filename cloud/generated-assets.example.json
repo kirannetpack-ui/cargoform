@@ -1,0 +1,4 @@
+{
+  "script": "/cloud-app/assets/index.js",
+  "css": ["/cloud-app/assets/index.css"]
+}

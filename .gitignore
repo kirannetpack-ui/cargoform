@@ -1,5 +1,9 @@
 node_modules/
 dist/
+.next/
+public/cloud-app/
+cloud/generated-assets.json
+next-env.d.ts
 server/node_modules/
 server/dist/
 server/.env
