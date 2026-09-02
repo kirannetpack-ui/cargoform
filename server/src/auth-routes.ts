@@ -27,7 +27,7 @@ const registrationSchema = z.object({
   registeredAddress: z.string().trim().max(500).optional(),
   contactPerson: z.string().trim().max(100).optional(),
 }).superRefine((value, context) => {
-  const required = value.accountType === "INDIVIDUAL"
+  const required: Array<[string, string | undefined]> = value.accountType === "INDIVIDUAL"
     ? [["dateOfBirth", value.dateOfBirth], ["residentialAddress", value.residentialAddress], ["identityType", value.identityType], ["identityNumber", value.identityNumber]]
     : [["registrationNumber", value.registrationNumber], ["registeredAddress", value.registeredAddress], ["contactPerson", value.contactPerson]];
   for (const [path, field] of required) if (!field) context.addIssue({ code: z.ZodIssueCode.custom, path: [path], message: "Required" });
