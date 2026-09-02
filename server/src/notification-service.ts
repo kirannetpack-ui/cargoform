@@ -4,6 +4,8 @@ import { renderNotificationEmail } from "./email-templates.js";
 import type { NotificationEventInput } from "./notification-events.js";
 
 export async function publishNotification(tx: Prisma.TransactionClient, event: NotificationEventInput) {
+  const organisation = await tx.organisation.findUnique({ where: { id: event.organisationId }, select: { legalName: true } });
+  const senderName = organisation?.legalName?.trim() || "CargoForm";
   const uniqueRecipients = [...new Map(event.recipients.map((recipient) => [recipient.userId, recipient])).values()];
   const preferences = await tx.notificationPreference.findMany({
     where: { organisationId: event.organisationId, eventType: event.eventType, userId: { in: uniqueRecipients.map((recipient) => recipient.userId) } },
@@ -22,7 +24,7 @@ export async function publishNotification(tx: Prisma.TransactionClient, event: N
   // One provider message per recipient prevents accidental disclosure of other
   // users' addresses and gives each delivery its own idempotency key.
   for (const recipient of emailRecipients) {
-    const rendered = renderNotificationEmail(event, recipient);
+    const rendered = renderNotificationEmail(event, recipient, senderName);
     await tx.emailOutbox.upsert({
       where: { eventKey: `${event.eventKey}:email:${recipient.userId}` },
       update: {},
