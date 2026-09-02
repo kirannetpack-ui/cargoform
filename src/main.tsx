@@ -13,6 +13,7 @@ import {
   HeadingLevel,
 } from "docx";
 import { saveAs } from "file-saver";
+import QRCode from "qrcode";
 import {
   Box,
   Check,
@@ -114,7 +115,8 @@ type OutboundEmail = { id: string; event: string; from: string; to: string; subj
 type AuthMode = "LOGIN" | "REGISTER" | "FORGOT" | "RESET" | "VERIFY";
 type AuthSessionInfo = { user: { id: string; email: string; displayName?: string }; role: string; organisation: { id: string; legalName: string; status: string }; application?: { id: string; status: string; reviewedAt?: string } | null };
 type AdminApplication = { id: string; organisationId: string; accountType: "INDIVIDUAL" | "ORGANISATION"; applicantEmail: string; status: string; submittedAt?: string; createdAt: string; payload?: Record<string, unknown>; organisation: { legalName: string; panVat?: string; registrationNumber?: string } };
-type AdminEmailRecord = { id: string; eventKey: string; status: string; attempts: number; lastError?: string; sentAt?: string; createdAt: string };
+type AdminEmailRecord = { id: string; eventKey: string; status: string; attempts: number; lastError?: string; sentAt?: string; createdAt: string; toEmails: string[] };
+type AdminEmailStatus = { connected: boolean; sender: string; connectedAt?: string | null; tokenExpiresAt?: string | null; queued: number; failed: number };
 type PackingBox = {
   id: string;
   lengthCm: number;
@@ -1674,9 +1676,12 @@ function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [authMessage, setAuthMessage] = useState(() => authModeFromPath() === "LOGIN" ? "Checking your secure session…" : "");
   const [mfaEnrollment, setMfaEnrollment] = useState<{ secret: string; uri: string } | null>(null);
+  const [mfaChallenge, setMfaChallenge] = useState(false);
+  const [mfaQrCode, setMfaQrCode] = useState("");
   const [sessionInfo, setSessionInfo] = useState<AuthSessionInfo | null>(null);
   const [adminApplications, setAdminApplications] = useState<AdminApplication[]>([]);
   const [adminEmailDelivery, setAdminEmailDelivery] = useState<AdminEmailRecord[]>([]);
+  const [adminEmailStatus, setAdminEmailStatus] = useState<AdminEmailStatus>({ connected: false, sender: "app.netpack@gmail.com", queued: 0, failed: 0 });
   const [adminDecisionReasons, setAdminDecisionReasons] = useState<Record<string, string>>({});
   const [adminLoading, setAdminLoading] = useState(false);
   const [passwordChange, setPasswordChange] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
@@ -1728,6 +1733,19 @@ function App() {
     }).catch(() => { setSessionInfo(null); setLoggedIn(false); if (authMode === "LOGIN") setAuthMessage(""); });
   }, [apiBase]);
   useEffect(() => {
+    if (!mfaEnrollment?.uri) { setMfaQrCode(""); return; }
+    QRCode.toDataURL(mfaEnrollment.uri, { width: 220, margin: 2, errorCorrectionLevel: "M" })
+      .then(setMfaQrCode)
+      .catch(() => setMfaQrCode(""));
+  }, [mfaEnrollment?.uri]);
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    const gmail = query.get("gmail");
+    if (!gmail) return;
+    setAuthMessage(gmail === "connected" ? "Gmail connected. Previously failed authorization-related emails are being retried." : "Gmail authorization was not completed. Please try connecting the mailbox again.");
+    window.history.replaceState({}, "", window.location.pathname);
+  }, []);
+  useEffect(() => {
     if (authMode !== "VERIFY") return;
     const token = new URLSearchParams(window.location.search).get("token");
     if (!token) { setAuthMessage("The verification link is incomplete."); return; }
@@ -1739,11 +1757,19 @@ function App() {
   useEffect(() => {
     if (!loggedIn || sessionInfo?.role !== "PLATFORM_ADMIN") return;
     setAdminLoading(true);
-    Promise.all([
+    Promise.allSettled([
       fetch(`${apiBase}/admin/applications`, { credentials: "include" }).then(async (response) => { if (!response.ok) throw new Error("APPLICATIONS_UNAVAILABLE"); return response.json(); }),
       fetch(`${apiBase}/admin/email-delivery`, { credentials: "include" }).then(async (response) => { if (!response.ok) throw new Error("EMAIL_DELIVERY_UNAVAILABLE"); return response.json(); }),
-    ]).then(([applications, delivery]) => { setAdminApplications(applications); setAdminEmailDelivery(delivery); })
-      .catch((error) => setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")))
+      fetch(`${apiBase}/admin/email-status`, { credentials: "include" }).then(async (response) => { if (!response.ok) throw new Error("EMAIL_STATUS_UNAVAILABLE"); return response.json(); }),
+    ]).then(([applications, delivery, emailStatus]) => {
+      if (applications.status === "fulfilled") setAdminApplications(applications.value);
+      if (delivery.status === "fulfilled") setAdminEmailDelivery(delivery.value);
+      if (emailStatus.status === "fulfilled") {
+        setAdminEmailStatus(emailStatus.value);
+        setEmailConfig((current: typeof emailConfig) => ({ ...current, sender: emailStatus.value.sender, connected: emailStatus.value.connected }));
+      }
+      if ([applications, delivery, emailStatus].every((result) => result.status === "rejected")) setAuthMessage("CargoForm could not load the Admin overview. Please refresh the page.");
+    })
       .finally(() => setAdminLoading(false));
   }, [apiBase, loggedIn, sessionInfo?.role]);
   useEffect(() => {
@@ -2170,9 +2196,16 @@ function App() {
   const installApp = async () => { if (!installPrompt) return; await installPrompt.prompt(); const result = await installPrompt.userChoice; if (result.outcome === "accepted") setInstallPrompt(null); };
   const openDocument = (kind: DocType) => { setDoc(kind); setActiveSection("Shipment data"); };
   const navigateAuth = (mode: AuthMode) => {
-    setAuthMode(mode); setMfaEnrollment(null); setAuthMessage("");
+    setAuthMode(mode); setMfaEnrollment(null); setMfaChallenge(false); setMfaQrCode(""); setAuthMessage("");
     const path = mode === "RESET" ? "/reset-password" : mode === "VERIFY" ? "/verify-email" : "/";
     if (mode !== "RESET" && mode !== "VERIFY") window.history.replaceState({}, "", path);
+  };
+  const establishAuthenticatedSession = async () => {
+    const sessionResponse = await fetch(`${apiBase}/auth/me`, { credentials: "include" });
+    if (!sessionResponse.ok) throw new Error("REQUEST_FAILED");
+    const session = await sessionResponse.json() as AuthSessionInfo;
+    setSessionInfo(session); setLoggedIn(true); setMfaEnrollment(null); setMfaChallenge(false); setAuthMessage("");
+    if (session.role === "PLATFORM_ADMIN") setActiveSection("Admin dashboard");
   };
   const submitAuthentication = async () => {
     if (registrationMode && authForm.password !== authForm.confirmPassword) { setAuthMessage("The password confirmation does not match."); return; }
@@ -2182,14 +2215,11 @@ function App() {
     try {
       const response = await fetch(`${apiBase}/auth/${route}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       const result = await response.json();
+      if (!response.ok && !registrationMode && result.error === "MFA_ENROLLMENT_REQUIRED") { await setupMfa(); return; }
+      if (!response.ok && !registrationMode && result.error === "MFA_REQUIRED" && !authForm.mfaCode) { setMfaChallenge(true); setAuthMessage("Password accepted. Enter the six-digit code from your authenticator app."); return; }
       if (!response.ok) throw new Error(result.error || "REQUEST_FAILED");
-      if (registrationMode) { navigateAuth("LOGIN"); setAuthMessage("Registration received. Open the verification email sent to your address, then wait for Platform Admin approval."); }
-      else {
-        const sessionResponse = await fetch(`${apiBase}/auth/me`, { credentials: "include" });
-        const session = await sessionResponse.json() as AuthSessionInfo;
-        setSessionInfo(session); setLoggedIn(true); setAuthMessage("");
-        if (session.role === "PLATFORM_ADMIN") setActiveSection("Admin dashboard");
-      }
+      if (registrationMode) { navigateAuth("LOGIN"); setAuthMessage("Registration saved. Verify your email address to submit it for Platform Administrator review."); }
+      else await establishAuthenticatedSession();
     } catch (error) { const message = error instanceof Error ? error.message : "REQUEST_FAILED"; setAuthMessage(message === "Failed to fetch" ? "CargoForm could not reach the secure account service. Please try again." : friendlyAuthError(message)); }
   };
   const requestPasswordReset = async () => {
@@ -2212,21 +2242,38 @@ function App() {
   };
   const setupMfa = async () => {
     setAuthMessage("Preparing authenticator setup…");
-    try { const response = await fetch(`${apiBase}/auth/mfa/setup`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: authForm.email, password: authForm.password }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); setMfaEnrollment(result); setAuthMessage("Add the key below to your authenticator app, then enter its six-digit code."); }
+    try { const response = await fetch(`${apiBase}/auth/mfa/setup`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: authForm.email, password: authForm.password }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); setMfaEnrollment(result); setMfaChallenge(true); setAuthMessage("Scan the QR code with an authenticator app, then enter the six-digit code it displays."); }
     catch (error) { setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); }
   };
   const confirmMfa = async () => {
-    try { const response = await fetch(`${apiBase}/auth/mfa/confirm`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: authForm.email, password: authForm.password, code: authForm.mfaCode }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); setMfaEnrollment(null); setAuthMessage("Authenticator verified. You can now sign in."); }
+    try {
+      const response = await fetch(`${apiBase}/auth/mfa/confirm`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: authForm.email, password: authForm.password, code: authForm.mfaCode }) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.error);
+      const loginResponse = await fetch(`${apiBase}/auth/login`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: authForm.email, password: authForm.password, mfaCode: authForm.mfaCode }) });
+      const loginResult = await loginResponse.json(); if (!loginResponse.ok) throw new Error(loginResult.error || "REQUEST_FAILED");
+      await establishAuthenticatedSession();
+    }
     catch (error) { setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); }
   };
   const refreshAdminData = async () => {
     setAdminLoading(true);
     try {
-      const [applicationsResponse, emailResponse] = await Promise.all([fetch(`${apiBase}/admin/applications`, { credentials: "include" }), fetch(`${apiBase}/admin/email-delivery`, { credentials: "include" })]);
-      if (!applicationsResponse.ok || !emailResponse.ok) throw new Error("REQUEST_FAILED");
-      setAdminApplications(await applicationsResponse.json()); setAdminEmailDelivery(await emailResponse.json());
+      const [applications, delivery, emailStatus] = await Promise.allSettled([
+        fetch(`${apiBase}/admin/applications`, { credentials: "include" }).then(async (response) => { if (!response.ok) throw new Error("APPLICATIONS_UNAVAILABLE"); return response.json(); }),
+        fetch(`${apiBase}/admin/email-delivery`, { credentials: "include" }).then(async (response) => { if (!response.ok) throw new Error("EMAIL_DELIVERY_UNAVAILABLE"); return response.json(); }),
+        fetch(`${apiBase}/admin/email-status`, { credentials: "include" }).then(async (response) => { if (!response.ok) throw new Error("EMAIL_STATUS_UNAVAILABLE"); return response.json(); }),
+      ]);
+      if (applications.status === "fulfilled") setAdminApplications(applications.value);
+      if (delivery.status === "fulfilled") setAdminEmailDelivery(delivery.value);
+      if (emailStatus.status === "fulfilled") { setAdminEmailStatus(emailStatus.value); setEmailConfig((current: typeof emailConfig) => ({ ...current, sender: emailStatus.value.sender, connected: emailStatus.value.connected })); }
+      if ([applications, delivery, emailStatus].every((result) => result.status === "rejected")) throw new Error("REQUEST_FAILED");
     } catch (error) { setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); }
     finally { setAdminLoading(false); }
+  };
+  const retryFailedEmails = async () => {
+    setAdminLoading(true);
+    try { const response = await fetch(`${apiBase}/admin/email-delivery/retry-failed`, { method: "POST", credentials: "include" }); const result = await response.json(); if (!response.ok) throw new Error(result.error || "REQUEST_FAILED"); setAuthMessage(`${result.queued} failed email${result.queued === 1 ? "" : "s"} returned to the delivery queue.`); await refreshAdminData(); }
+    catch (error) { setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); setAdminLoading(false); }
   };
   const decideApplication = async (applicationId: string, decision: "APPROVED" | "CHANGES_REQUESTED" | "REJECTED") => {
     const reason = adminDecisionReasons[applicationId]?.trim();
@@ -2261,13 +2308,14 @@ function App() {
   };
   const renderModule = () => {
     if (activeSection === "Admin dashboard") {
+      const pendingVerification = adminApplications.filter((item) => item.status === "DRAFT").length;
       const pending = adminApplications.filter((item) => item.status === "SUBMITTED" || item.status === "CHANGES_REQUESTED").length;
       const approved = adminApplications.filter((item) => item.status === "APPROVED").length;
       const failedEmails = adminEmailDelivery.filter((item) => item.status === "FAILED").length;
-      return <section className="module-page"><div className="module-head"><div><p className="eyebrow">PLATFORM ADMIN</p><h2>Administration dashboard</h2><small>Account governance is separated from confidential shipment content.</small></div><button disabled={adminLoading} onClick={refreshAdminData}>{adminLoading ? "Refreshing…" : "Refresh"}</button></div><div className="admin-metrics"><div><b>{pending}</b><span>Awaiting review</span></div><div><b>{approved}</b><span>Approved Main Users</span></div><div><b>{adminEmailDelivery.filter((item)=>item.status === "QUEUED").length}</b><span>Queued emails</span></div><div className={failedEmails ? "attention" : ""}><b>{failedEmails}</b><span>Failed emails</span></div></div><div className="admin-callout"><div><h3>Production email connection</h3><p>Authorize the exact app.netpack@gmail.com mailbox. CargoForm stores OAuth tokens, never the Gmail password.</p></div><button onClick={connectGmail}>Connect Gmail</button></div>{authMessage && <p className="status-message">{authMessage}</p>}</section>;
+      return <section className="module-page"><div className="module-head"><div><p className="eyebrow">PLATFORM ADMIN</p><h2>Administration dashboard</h2><small>Account governance is separated from confidential shipment content.</small></div><div className="button-pair"><button onClick={()=>setActiveSection("Main User approvals")}>Review registrations</button><button disabled={adminLoading} onClick={refreshAdminData}>{adminLoading ? "Refreshing…" : "Refresh"}</button></div></div><div className="admin-metrics"><div><b>{pendingVerification}</b><span>Email verification pending</span></div><div><b>{pending}</b><span>Awaiting Admin review</span></div><div><b>{approved}</b><span>Approved Main Users</span></div><div><b>{adminEmailStatus.queued}</b><span>Queued emails</span></div><div className={failedEmails ? "attention" : ""}><b>{failedEmails}</b><span>Failed emails</span></div></div><div className={`admin-callout ${adminEmailStatus.connected ? "connected" : "attention"}`}><div><h3>{adminEmailStatus.connected ? "Gmail delivery connected" : "Action required: connect Gmail"}</h3><p>{adminEmailStatus.connected ? `${adminEmailStatus.sender} is authorized for CargoForm notifications.` : "Verification and approval emails cannot be delivered until app.netpack@gmail.com is authorized."}</p></div>{!adminEmailStatus.connected && <button onClick={connectGmail}>Connect Gmail securely</button>}</div>{authMessage && <p className="status-message">{authMessage}</p>}</section>;
     }
-    if (activeSection === "Main User approvals") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">ACCOUNT GOVERNANCE</p><h2>Main User registrations</h2><small>Review verified applicants and record a reason for every decision.</small></div><button disabled={adminLoading} onClick={refreshAdminData}>{adminLoading ? "Refreshing…" : "Refresh"}</button></div>{adminApplications.length === 0 ? <div className="empty-state">No Main User registrations have been submitted.</div> : <div className="application-list">{adminApplications.map((application) => <article className="application-card" key={application.id}><div className="application-head"><div><h3>{application.organisation.legalName}</h3><p>{application.applicantEmail} · {application.accountType.toLowerCase()}</p></div><span className={`status ${application.status.toLowerCase()}`}>{application.status.replace("_", " ")}</span></div><dl><div><dt>Registration no.</dt><dd>{application.organisation.registrationNumber || "Not supplied"}</dd></div><div><dt>PAN / VAT</dt><dd>{application.organisation.panVat || "Not supplied"}</dd></div><div><dt>Phone</dt><dd>{String(application.payload?.phone || "Not supplied")}</dd></div><div><dt>Submitted</dt><dd>{application.submittedAt ? new Date(application.submittedAt).toLocaleString() : "Email verification pending"}</dd></div></dl>{application.status === "SUBMITTED" || application.status === "CHANGES_REQUESTED" ? <><label>Review reason<textarea value={adminDecisionReasons[application.id] || ""} onChange={(event)=>setAdminDecisionReasons((current)=>({ ...current, [application.id]: event.target.value }))} placeholder="Record the evidence reviewed and reason for this decision."/></label><div className="decision-actions"><button disabled={adminLoading} onClick={()=>decideApplication(application.id,"APPROVED")}>Approve Main User</button><button disabled={adminLoading} onClick={()=>decideApplication(application.id,"CHANGES_REQUESTED")}>Request changes</button><button className="danger" disabled={adminLoading} onClick={()=>decideApplication(application.id,"REJECTED")}>Reject</button></div></> : null}</article>)}</div>}{authMessage && <p className="status-message">{authMessage}</p>}</section>;
-    if (activeSection === "Email delivery") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">DELIVERY OPERATIONS</p><h2>Email delivery monitor</h2><small>Verification, password reset, registration and operational messages.</small></div><div className="button-pair"><button onClick={connectGmail}>Connect Gmail</button><button disabled={adminLoading} onClick={refreshAdminData}>Refresh</button></div></div>{adminEmailDelivery.length === 0 ? <div className="empty-state">No email delivery records.</div> : <div className="record-list">{adminEmailDelivery.map((item)=><div className="record-row" key={item.id}><div><b>{item.eventKey}</b><small>{new Date(item.createdAt).toLocaleString()}{item.lastError ? ` · ${item.lastError}` : ""}</small></div><span className={`status ${item.status.toLowerCase()}`}>{item.status}</span><small>{item.attempts} attempt{item.attempts === 1 ? "" : "s"}</small></div>)}</div>}</section>;
+    if (activeSection === "Main User approvals") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">ACCOUNT GOVERNANCE</p><h2>Main User registrations</h2><small>Unverified registrations remain visible, but approval starts only after email verification.</small></div><button disabled={adminLoading} onClick={refreshAdminData}>{adminLoading ? "Refreshing…" : "Refresh"}</button></div>{adminApplications.length === 0 ? <div className="empty-state">No Main User registrations have been received.</div> : <div className="application-list">{adminApplications.map((application) => <article className="application-card" key={application.id}><div className="application-head"><div><h3>{application.organisation.legalName}</h3><p>{application.applicantEmail} · {application.accountType.toLowerCase()}</p></div><span className={`status ${application.status.toLowerCase()}`}>{application.status === "DRAFT" ? "EMAIL VERIFICATION PENDING" : application.status.replaceAll("_", " ")}</span></div><dl><div><dt>Registration no.</dt><dd>{application.organisation.registrationNumber || "Not supplied"}</dd></div><div><dt>PAN / VAT</dt><dd>{application.organisation.panVat || "Not supplied"}</dd></div><div><dt>Phone</dt><dd>{String(application.payload?.phone || "Not supplied")}</dd></div><div><dt>Submitted</dt><dd>{application.submittedAt ? new Date(application.submittedAt).toLocaleString() : "Not submitted — email verification required"}</dd></div></dl>{application.status === "DRAFT" && <p className="application-guidance">The applicant must open the verification email before this registration can be reviewed. Check Email delivery if the message has failed.</p>}{application.status === "SUBMITTED" || application.status === "CHANGES_REQUESTED" ? <><label>Review reason<textarea value={adminDecisionReasons[application.id] || ""} onChange={(event)=>setAdminDecisionReasons((current)=>({ ...current, [application.id]: event.target.value }))} placeholder="Record the evidence reviewed and reason for this decision."/></label><div className="decision-actions"><button disabled={adminLoading} onClick={()=>decideApplication(application.id,"APPROVED")}>Approve and notify applicant</button><button disabled={adminLoading} onClick={()=>decideApplication(application.id,"CHANGES_REQUESTED")}>Request changes and notify</button><button className="danger" disabled={adminLoading} onClick={()=>decideApplication(application.id,"REJECTED")}>Reject and notify</button></div></> : null}</article>)}</div>}{authMessage && <p className="status-message">{authMessage}</p>}</section>;
+    if (activeSection === "Email delivery") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">DELIVERY OPERATIONS</p><h2>Email delivery monitor</h2><small>Verification, password reset, registration and operational messages.</small></div><div className="button-pair">{!adminEmailStatus.connected && <button onClick={connectGmail}>Connect Gmail</button>}<button disabled={adminLoading || adminEmailStatus.failed === 0} onClick={retryFailedEmails}>Retry failed</button><button disabled={adminLoading} onClick={refreshAdminData}>Refresh</button></div></div><div className={`delivery-summary ${adminEmailStatus.connected ? "connected" : "attention"}`}><b>{adminEmailStatus.connected ? "Gmail connected" : "Gmail connection required"}</b><span>{adminEmailStatus.connected ? `${adminEmailStatus.sender} is authorized.` : "Emails remain queued or failed until the sender mailbox is authorized."}</span></div>{adminEmailDelivery.length === 0 ? <div className="empty-state">No email delivery records.</div> : <div className="record-list">{adminEmailDelivery.map((item)=><div className="record-row" key={item.id}><div><b>{item.eventKey}</b><small>To: {item.toEmails.join(", ")}</small><small>{new Date(item.createdAt).toLocaleString()}{item.lastError ? ` · ${item.lastError.replaceAll("_", " ")}` : ""}</small></div><span className={`status ${item.status.toLowerCase()}`}>{item.status}</span><small>{item.attempts} attempt{item.attempts === 1 ? "" : "s"}</small></div>)}</div>}</section>;
     if (activeSection === "Profile") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">MAIN USER ACCOUNT</p><h2>Profile and Admin registration</h2><small>Status: {profile.status.replace("_", " ")}</small></div><button disabled={profile.status === "SUBMITTED"} onClick={submitProfile}>{profile.status === "SUBMITTED" ? "Awaiting Admin review" : "Submit to Admin"}</button></div><div className="account-type"><button className={profile.accountType === "INDIVIDUAL" ? "chosen" : ""} onClick={()=>setProfile({...profile,accountType:"INDIVIDUAL",status:"DRAFT"})}>Individual</button><button className={profile.accountType === "ORGANISATION" ? "chosen" : ""} onClick={()=>setProfile({...profile,accountType:"ORGANISATION",status:"DRAFT"})}>Organisation</button></div><div className="settings-grid profile-fields">{profile.accountType === "INDIVIDUAL" ? <><label>Full legal name<input value={profile.fullName} onChange={(e)=>setProfile({...profile,fullName:e.target.value,status:"DRAFT"})}/></label><label>Date of birth<input type="date" value={profile.dateOfBirth} onChange={(e)=>setProfile({...profile,dateOfBirth:e.target.value,status:"DRAFT"})}/></label><label>Email<input type="email" value={profile.email} onChange={(e)=>setProfile({...profile,email:e.target.value,status:"DRAFT"})}/></label><label>Phone<input value={profile.phone} onChange={(e)=>setProfile({...profile,phone:e.target.value,status:"DRAFT"})}/></label><label className="wide">Residential address<input value={profile.address} onChange={(e)=>setProfile({...profile,address:e.target.value,status:"DRAFT"})}/></label><label>Identity document type<input value={profile.identityType} onChange={(e)=>setProfile({...profile,identityType:e.target.value,status:"DRAFT"})}/></label><label>Identity document number<input value={profile.identityNumber} onChange={(e)=>setProfile({...profile,identityNumber:e.target.value,status:"DRAFT"})}/></label></> : <><label>Registered legal name<input value={profile.legalName} onChange={(e)=>setProfile({...profile,legalName:e.target.value,status:"DRAFT"})}/></label><label>Company registration number<input value={profile.registrationNumber} onChange={(e)=>setProfile({...profile,registrationNumber:e.target.value,status:"DRAFT"})}/></label><label>PAN / VAT number<input value={profile.panVat} onChange={(e)=>setProfile({...profile,panVat:e.target.value,status:"DRAFT"})}/></label><label>Date of incorporation<input type="date" value={profile.incorporationDate} onChange={(e)=>setProfile({...profile,incorporationDate:e.target.value,status:"DRAFT"})}/></label><label className="wide">Registered office address<input value={profile.registeredAddress} onChange={(e)=>setProfile({...profile,registeredAddress:e.target.value,status:"DRAFT"})}/></label><label>Authorized contact person<input value={profile.contactPerson} onChange={(e)=>setProfile({...profile,contactPerson:e.target.value,status:"DRAFT"})}/></label><label>Official email<input type="email" value={profile.email} onChange={(e)=>setProfile({...profile,email:e.target.value,status:"DRAFT"})}/></label><label>Official phone<input value={profile.phone} onChange={(e)=>setProfile({...profile,phone:e.target.value,status:"DRAFT"})}/></label></>}</div><p className="privacy-note">Identity and company evidence must be uploaded to secured backend storage in production. Sensitive documents are deliberately not stored in this browser-only MVP.</p></section>;
     if (activeSection === "Messages") {
       const clientThreads = contacts.filter((item)=>item.role === "CHILD_ACCOUNT");
@@ -2300,14 +2348,14 @@ function App() {
     {(authMode === "LOGIN" || authMode === "REGISTER") && <label className="show-password"><input type="checkbox" checked={showPassword} onChange={(e)=>setShowPassword(e.target.checked)}/> Show password while checking it</label>}
     {authMode === "REGISTER" && <><label>Confirm password<input type="password" value={authForm.confirmPassword} onChange={(e)=>setAuthForm({...authForm,confirmPassword:e.target.value})} autoComplete="new-password"/></label><small className="password-rule">At least 12 characters, including uppercase, lowercase and a number.</small></>}
     {authMode === "RESET" && <><label>New password<input type="password" value={authForm.newPassword} onChange={(e)=>setAuthForm({...authForm,newPassword:e.target.value})} autoComplete="new-password"/></label><label>Confirm new password<input type="password" value={authForm.confirmPassword} onChange={(e)=>setAuthForm({...authForm,confirmPassword:e.target.value})} autoComplete="new-password"/></label></>}
-    {authMode === "LOGIN" && <label>Authenticator code (when enabled)<input inputMode="numeric" maxLength={6} value={authForm.mfaCode} onChange={(e)=>setAuthForm({...authForm,mfaCode:e.target.value.replace(/\D/g,"")})}/></label>}
-    {mfaEnrollment && <div className="privacy-note"><b>Authenticator setup key</b><br/><code>{mfaEnrollment.secret}</code><br/>Keep this key private. Add it to an authenticator app, then enter the current six-digit code.</div>}
-    {authMode === "LOGIN" && <button className="auth-primary" onClick={mfaEnrollment?confirmMfa:submitAuthentication}>{mfaEnrollment?"Confirm authenticator":"Sign in"}</button>}
+    {authMode === "LOGIN" && (mfaChallenge || mfaEnrollment) && <label>Six-digit authenticator code<input autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" value={authForm.mfaCode} onChange={(e)=>setAuthForm({...authForm,mfaCode:e.target.value.replace(/\D/g,"")})}/></label>}
+    {mfaEnrollment && <div className="mfa-enrollment"><div><b>Secure your account</b><p>1. Open Google Authenticator or Microsoft Authenticator on your phone.</p><p>2. Tap <strong>+</strong> and scan this QR code.</p><p>3. Enter the six-digit code shown by the app above.</p></div>{mfaQrCode && <img src={mfaQrCode} alt="Scan to add CargoForm to your authenticator app"/>}<details><summary>Cannot scan? Enter the setup key manually</summary><code>{mfaEnrollment.secret}</code><small>Account: CargoForm – {authForm.email}. Type: Time-based. Keep this key private.</small></details></div>}
+    {authMode === "LOGIN" && <button className="auth-primary" disabled={(mfaChallenge || Boolean(mfaEnrollment)) && authForm.mfaCode.length !== 6} onClick={mfaEnrollment?confirmMfa:submitAuthentication}>{mfaEnrollment?"Confirm and sign in":mfaChallenge?"Verify and sign in":"Continue"}</button>}
     {authMode === "REGISTER" && <button className="auth-primary" onClick={submitAuthentication}>Submit secure registration</button>}
     {authMode === "FORGOT" && <button className="auth-primary" onClick={requestPasswordReset}>Send reset link</button>}
     {authMode === "RESET" && <button className="auth-primary" onClick={resetPassword}>Update password</button>}
     {authMode === "VERIFY" && <button className="auth-primary" onClick={()=>navigateAuth("LOGIN")}>Continue to sign in</button>}
-    {authMode === "LOGIN" && !mfaEnrollment && <><button className="auth-secondary" onClick={setupMfa}>First sign-in: set up authenticator</button><small className="password-rule">Use the same email and password shown above. Administrator MFA remains required for account security.</small><div className="auth-links"><button onClick={()=>navigateAuth("FORGOT")}>Forgot password?</button><button onClick={resendVerification}>Resend verification</button></div><button className="auth-secondary" onClick={()=>navigateAuth("REGISTER")}>New Main User? Register with Admin</button></>}
+    {authMode === "LOGIN" && !mfaEnrollment && <><small className="password-rule">CargoForm will request an authenticator code only when your account requires it.</small><div className="auth-links"><button onClick={()=>navigateAuth("FORGOT")}>Forgot password?</button><button onClick={resendVerification}>Resend verification</button></div><button className="auth-secondary" onClick={()=>navigateAuth("REGISTER")}>New Main User? Register with Admin</button></>}
     {(authMode === "REGISTER" || authMode === "FORGOT" || authMode === "RESET") && <button className="auth-secondary" onClick={()=>navigateAuth("LOGIN")}>Back to sign in</button>}
     {authMessage && <small className="auth-message" role="status">{authMessage}</small>}<small>Platform Admin: app.netpack@gmail.com. Public Admin registration is disabled; Main User registrations require verified email and Admin approval.</small></div></div>;
   return (

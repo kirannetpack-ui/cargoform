@@ -41,6 +41,9 @@ async function issueToken(userId: string, purpose: "VERIFY_EMAIL" | "RESET_PASSW
 async function queueEmail(organisationId: string, email: string, eventKey: string, subject: string, body: string) {
   await db.emailOutbox.create({ data: { organisationId, eventKey, fromEmail: config.GMAIL_EXPECTED_SENDER, toEmails: [email], ccEmails: [], subject, textBody: body } });
 }
+function accountSignature(senderName: string) {
+  return `Kind regards,\n${senderName}\nCargoForm Notification Service`;
+}
 
 authRouter.post("/register", async (req, res) => {
   const input = registrationSchema.parse(req.body);
@@ -54,8 +57,8 @@ authRouter.post("/register", async (req, res) => {
     return { organisation, user };
   });
   const token = await issueToken(result.user.id, "VERIFY_EMAIL");
-  await queueEmail(result.organisation.id, input.email, `auth:${result.user.id}:verify`, "Verify your CargoForm email address", `Dear ${input.displayName},\n\nPlease verify your email address to continue your CargoForm registration:\n${config.APP_ORIGIN}/verify-email?token=${encodeURIComponent(token)}\n\nThis secure link expires in ${config.AUTH_TOKEN_TTL_MINUTES} minutes. If you did not request this registration, no action is required.\n\nKind regards,\nCargoForm Account Services`);
-  res.status(202).json({ accepted: true });
+  await queueEmail(result.organisation.id, input.email, `auth:${result.user.id}:verify`, "Action required: verify your CargoForm registration", `Dear ${input.displayName},\n\nThank you for registering ${input.legalName} with CargoForm. Your application has been saved, but it will not be submitted to the Platform Administrator until you verify this email address:\n${config.APP_ORIGIN}/verify-email?token=${encodeURIComponent(token)}\n\nThis secure link expires in ${config.AUTH_TOKEN_TTL_MINUTES} minutes. If you did not request this registration, no action is required.\n\n${accountSignature(input.legalName)}`);
+  res.status(202).json({ accepted: true, status: "EMAIL_VERIFICATION_PENDING" });
 });
 
 authRouter.post("/verify-email", async (req, res) => {
@@ -73,12 +76,15 @@ authRouter.post("/verify-email", async (req, res) => {
     await tx.mainUserApplication.update({ where: { id: application.id }, data: { status: "SUBMITTED", submittedAt } });
     await tx.organisation.update({ where: { id: ownerMembership.organisationId }, data: { status: "SUBMITTED" } });
     const administrators = await tx.user.findMany({ where: { memberships: { some: { role: "PLATFORM_ADMIN" } } }, select: { id: true, email: true, displayName: true } });
-    if (administrators.length) await publishNotification(tx, {
+    await publishNotification(tx, {
       eventKey: `registration:${application.id}:submitted`, eventType: "REGISTRATION_SUBMITTED", organisationId: ownerMembership.organisationId, actorUserId: record.userId,
       entityType: "MainUserApplication", entityId: application.id,
-      recipients: administrators.map((admin) => ({ userId: admin.id, email: admin.email, displayName: admin.displayName })),
-      title: "Main User Registration Submitted for Administrative Review",
-      detail: `${record.user.displayName} (${record.user.email}) completed email verification and is awaiting review.`,
+      recipients: [
+        { userId: record.user.id, email: record.user.email, displayName: record.user.displayName },
+        ...administrators.map((admin) => ({ userId: admin.id, email: admin.email, displayName: admin.displayName })),
+      ],
+      title: "Main User Registration Ready for Administrative Review",
+      detail: `${record.user.displayName} (${record.user.email}) completed email verification. The application is now awaiting a Platform Administrator decision.`,
       actionUrl: `${config.APP_ORIGIN}/admin/registrations/${application.id}`,
     });
   });
@@ -87,11 +93,12 @@ authRouter.post("/verify-email", async (req, res) => {
 
 authRouter.post("/resend-verification", async (req, res) => {
   const email = z.object({ email: emailSchema }).parse(req.body).email;
-  const user = await db.user.findUnique({ where: { email }, include: { memberships: true } });
+  const user = await db.user.findUnique({ where: { email }, include: { memberships: { include: { organisation: { select: { legalName: true } } } } } });
   if (user && !user.disabledAt && !user.emailVerifiedAt && user.memberships[0]) {
     await db.authToken.updateMany({ where: { userId: user.id, purpose: "VERIFY_EMAIL", usedAt: null }, data: { usedAt: new Date() } });
     const token = await issueToken(user.id, "VERIFY_EMAIL");
-    await queueEmail(user.memberships[0].organisationId, user.email, `auth:${user.id}:verify:${Date.now()}`, "Verify your CargoForm email address", `Dear ${user.displayName},\n\nPlease verify your email address to continue your CargoForm registration:\n${config.APP_ORIGIN}/verify-email?token=${encodeURIComponent(token)}\n\nThis secure link expires in ${config.AUTH_TOKEN_TTL_MINUTES} minutes.\n\nKind regards,\nCargoForm Account Services`);
+    const senderName = user.memberships[0].organisation.legalName;
+    await queueEmail(user.memberships[0].organisationId, user.email, `auth:${user.id}:verify:${Date.now()}`, "Action required: verify your CargoForm registration", `Dear ${user.displayName},\n\nYour CargoForm registration is still waiting for email verification. Open this secure link to submit it for Platform Administrator review:\n${config.APP_ORIGIN}/verify-email?token=${encodeURIComponent(token)}\n\nThis link expires in ${config.AUTH_TOKEN_TTL_MINUTES} minutes.\n\n${accountSignature(senderName)}`);
   }
   res.status(202).json({ accepted: true });
 });
@@ -120,11 +127,12 @@ authRouter.post("/login", async (req, res) => {
 
 authRouter.post("/forgot-password", async (req, res) => {
   const email = z.object({ email: emailSchema }).parse(req.body).email;
-  const user = await db.user.findUnique({ where: { email }, include: { memberships: true } });
+  const user = await db.user.findUnique({ where: { email }, include: { memberships: { include: { organisation: { select: { legalName: true } } } } } });
   if (user && !user.disabledAt && user.memberships[0]) {
     await db.authToken.updateMany({ where: { userId: user.id, purpose: "RESET_PASSWORD", usedAt: null }, data: { usedAt: new Date() } });
     const token = await issueToken(user.id, "RESET_PASSWORD");
-    await queueEmail(user.memberships[0].organisationId, user.email, `auth:${user.id}:reset:${Date.now()}`, "Reset your CargoForm password", `Dear ${user.displayName},\n\nUse this secure link to reset your CargoForm password:\n${config.APP_ORIGIN}/reset-password?token=${encodeURIComponent(token)}\n\nThis link expires in ${config.AUTH_TOKEN_TTL_MINUTES} minutes.\n\nKind regards,\nCargoForm Account Services`);
+    const senderName = user.memberships[0].organisation.legalName;
+    await queueEmail(user.memberships[0].organisationId, user.email, `auth:${user.id}:reset:${Date.now()}`, "Action requested: reset your CargoForm password", `Dear ${user.displayName},\n\nA password reset was requested for your CargoForm account. Use this secure link to choose a new password:\n${config.APP_ORIGIN}/reset-password?token=${encodeURIComponent(token)}\n\nThis link expires in ${config.AUTH_TOKEN_TTL_MINUTES} minutes. If you did not request it, you may safely ignore this message.\n\n${accountSignature(senderName)}`);
   }
   res.status(202).json({ accepted: true });
 });

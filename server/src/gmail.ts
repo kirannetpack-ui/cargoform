@@ -28,6 +28,13 @@ export async function completeGmailAuthorization(code: string, state: string) {
     update: { encryptedTokens: encryptJson(tokens), scopes: tokens.scope?.split(" ") ?? [], expiresAt: tokens.expiry_date ? new Date(tokens.expiry_date) : null },
     create: { organisationId: String(payload.organisationId), provider: "gmail", accountEmail, encryptedTokens: encryptJson(tokens), scopes: tokens.scope?.split(" ") ?? [], expiresAt: tokens.expiry_date ? new Date(tokens.expiry_date) : null },
   });
+  // Authorization can be completed after registration emails have already
+  // exhausted their retries. Return only sender-authorization failures to the
+  // queue; other failures still require an administrator to review them.
+  await db.emailOutbox.updateMany({
+    where: { status: "FAILED", lastError: "GMAIL_SENDER_NOT_AUTHORIZED" },
+    data: { status: "QUEUED", attempts: 0, nextAttemptAt: new Date(), lastError: null },
+  });
   return accountEmail;
 }
 
