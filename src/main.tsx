@@ -13,7 +13,6 @@ import {
   HeadingLevel,
 } from "docx";
 import { saveAs } from "file-saver";
-import QRCode from "qrcode";
 import {
   Box,
   Check,
@@ -1676,8 +1675,6 @@ function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [authMessage, setAuthMessage] = useState(() => authModeFromPath() === "LOGIN" ? "Checking your secure session…" : "");
   const [mfaEnrollment, setMfaEnrollment] = useState<{ secret: string; uri: string } | null>(null);
-  const [mfaChallenge, setMfaChallenge] = useState(false);
-  const [mfaQrCode, setMfaQrCode] = useState("");
   const [sessionInfo, setSessionInfo] = useState<AuthSessionInfo | null>(null);
   const [adminApplications, setAdminApplications] = useState<AdminApplication[]>([]);
   const [adminEmailDelivery, setAdminEmailDelivery] = useState<AdminEmailRecord[]>([]);
@@ -1732,12 +1729,6 @@ function App() {
       if (result.organisation?.legalName) setOrganisation((current: typeof organisation) => ({ ...current, name: result.organisation.legalName }));
     }).catch(() => { setSessionInfo(null); setLoggedIn(false); if (authMode === "LOGIN") setAuthMessage(""); });
   }, [apiBase]);
-  useEffect(() => {
-    if (!mfaEnrollment?.uri) { setMfaQrCode(""); return; }
-    QRCode.toDataURL(mfaEnrollment.uri, { width: 220, margin: 2, errorCorrectionLevel: "M" })
-      .then(setMfaQrCode)
-      .catch(() => setMfaQrCode(""));
-  }, [mfaEnrollment?.uri]);
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
     const gmail = query.get("gmail");
@@ -2196,7 +2187,7 @@ function App() {
   const installApp = async () => { if (!installPrompt) return; await installPrompt.prompt(); const result = await installPrompt.userChoice; if (result.outcome === "accepted") setInstallPrompt(null); };
   const openDocument = (kind: DocType) => { setDoc(kind); setActiveSection("Shipment data"); };
   const navigateAuth = (mode: AuthMode) => {
-    setAuthMode(mode); setMfaEnrollment(null); setMfaChallenge(false); setMfaQrCode(""); setAuthMessage("");
+    setAuthMode(mode); setMfaEnrollment(null); setAuthMessage("");
     const path = mode === "RESET" ? "/reset-password" : mode === "VERIFY" ? "/verify-email" : "/";
     if (mode !== "RESET" && mode !== "VERIFY") window.history.replaceState({}, "", path);
   };
@@ -2204,7 +2195,7 @@ function App() {
     const sessionResponse = await fetch(`${apiBase}/auth/me`, { credentials: "include" });
     if (!sessionResponse.ok) throw new Error("REQUEST_FAILED");
     const session = await sessionResponse.json() as AuthSessionInfo;
-    setSessionInfo(session); setLoggedIn(true); setMfaEnrollment(null); setMfaChallenge(false); setAuthMessage("");
+    setSessionInfo(session); setLoggedIn(true); setMfaEnrollment(null); setAuthMessage("");
     if (session.role === "PLATFORM_ADMIN") setActiveSection("Admin dashboard");
   };
   const submitAuthentication = async () => {
@@ -2215,8 +2206,6 @@ function App() {
     try {
       const response = await fetch(`${apiBase}/auth/${route}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       const result = await response.json();
-      if (!response.ok && !registrationMode && result.error === "MFA_ENROLLMENT_REQUIRED") { await setupMfa(); return; }
-      if (!response.ok && !registrationMode && result.error === "MFA_REQUIRED" && !authForm.mfaCode) { setMfaChallenge(true); setAuthMessage("Password accepted. Enter the six-digit code from your authenticator app."); return; }
       if (!response.ok) throw new Error(result.error || "REQUEST_FAILED");
       if (registrationMode) { navigateAuth("LOGIN"); setAuthMessage("Registration saved. Verify your email address to submit it for Platform Administrator review."); }
       else await establishAuthenticatedSession();
@@ -2242,16 +2231,16 @@ function App() {
   };
   const setupMfa = async () => {
     setAuthMessage("Preparing authenticator setup…");
-    try { const response = await fetch(`${apiBase}/auth/mfa/setup`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: authForm.email, password: authForm.password }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); setMfaEnrollment(result); setMfaChallenge(true); setAuthMessage("Scan the QR code with an authenticator app, then enter the six-digit code it displays."); }
+    try { const response = await fetch(`${apiBase}/auth/mfa/setup`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: authForm.email, password: authForm.password }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); setMfaEnrollment(result); setAuthMessage("Add the setup key shown below to your authenticator app, then enter the current six-digit code."); }
     catch (error) { setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); }
   };
   const confirmMfa = async () => {
     try {
       const response = await fetch(`${apiBase}/auth/mfa/confirm`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: authForm.email, password: authForm.password, code: authForm.mfaCode }) });
       const result = await response.json(); if (!response.ok) throw new Error(result.error);
-      const loginResponse = await fetch(`${apiBase}/auth/login`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: authForm.email, password: authForm.password, mfaCode: authForm.mfaCode }) });
-      const loginResult = await loginResponse.json(); if (!loginResponse.ok) throw new Error(loginResult.error || "REQUEST_FAILED");
-      await establishAuthenticatedSession();
+      setMfaEnrollment(null);
+      setAuthForm((current) => ({ ...current, mfaCode: "" }));
+      setAuthMessage("Authenticator verified. Enter the current six-digit code and sign in.");
     }
     catch (error) { setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); }
   };
@@ -2348,14 +2337,14 @@ function App() {
     {(authMode === "LOGIN" || authMode === "REGISTER") && <label className="show-password"><input type="checkbox" checked={showPassword} onChange={(e)=>setShowPassword(e.target.checked)}/> Show password while checking it</label>}
     {authMode === "REGISTER" && <><label>Confirm password<input type="password" value={authForm.confirmPassword} onChange={(e)=>setAuthForm({...authForm,confirmPassword:e.target.value})} autoComplete="new-password"/></label><small className="password-rule">At least 12 characters, including uppercase, lowercase and a number.</small></>}
     {authMode === "RESET" && <><label>New password<input type="password" value={authForm.newPassword} onChange={(e)=>setAuthForm({...authForm,newPassword:e.target.value})} autoComplete="new-password"/></label><label>Confirm new password<input type="password" value={authForm.confirmPassword} onChange={(e)=>setAuthForm({...authForm,confirmPassword:e.target.value})} autoComplete="new-password"/></label></>}
-    {authMode === "LOGIN" && (mfaChallenge || mfaEnrollment) && <label>Six-digit authenticator code<input autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" value={authForm.mfaCode} onChange={(e)=>setAuthForm({...authForm,mfaCode:e.target.value.replace(/\D/g,"")})}/></label>}
-    {mfaEnrollment && <div className="mfa-enrollment"><div><b>Secure your account</b><p>1. Open Google Authenticator or Microsoft Authenticator on your phone.</p><p>2. Tap <strong>+</strong> and scan this QR code.</p><p>3. Enter the six-digit code shown by the app above.</p></div>{mfaQrCode && <img src={mfaQrCode} alt="Scan to add CargoForm to your authenticator app"/>}<details><summary>Cannot scan? Enter the setup key manually</summary><code>{mfaEnrollment.secret}</code><small>Account: CargoForm – {authForm.email}. Type: Time-based. Keep this key private.</small></details></div>}
-    {authMode === "LOGIN" && <button className="auth-primary" disabled={(mfaChallenge || Boolean(mfaEnrollment)) && authForm.mfaCode.length !== 6} onClick={mfaEnrollment?confirmMfa:submitAuthentication}>{mfaEnrollment?"Confirm and sign in":mfaChallenge?"Verify and sign in":"Continue"}</button>}
+    {authMode === "LOGIN" && <label>Authenticator code (when enabled)<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" value={authForm.mfaCode} onChange={(e)=>setAuthForm({...authForm,mfaCode:e.target.value.replace(/\D/g,"")})}/></label>}
+    {mfaEnrollment && <div className="mfa-setup-key"><b>Authenticator setup key</b><code>{mfaEnrollment.secret}</code><small>Keep this key private. Add it to Google Authenticator, Microsoft Authenticator, or another TOTP app, then enter the current six-digit code above.</small></div>}
+    {authMode === "LOGIN" && <button className="auth-primary" disabled={Boolean(mfaEnrollment) && authForm.mfaCode.length !== 6} onClick={mfaEnrollment?confirmMfa:submitAuthentication}>{mfaEnrollment?"Confirm authenticator":"Sign in"}</button>}
     {authMode === "REGISTER" && <button className="auth-primary" onClick={submitAuthentication}>Submit secure registration</button>}
     {authMode === "FORGOT" && <button className="auth-primary" onClick={requestPasswordReset}>Send reset link</button>}
     {authMode === "RESET" && <button className="auth-primary" onClick={resetPassword}>Update password</button>}
     {authMode === "VERIFY" && <button className="auth-primary" onClick={()=>navigateAuth("LOGIN")}>Continue to sign in</button>}
-    {authMode === "LOGIN" && !mfaEnrollment && <><small className="password-rule">CargoForm will request an authenticator code only when your account requires it.</small><div className="auth-links"><button onClick={()=>navigateAuth("FORGOT")}>Forgot password?</button><button onClick={resendVerification}>Resend verification</button></div><button className="auth-secondary" onClick={()=>navigateAuth("REGISTER")}>New Main User? Register with Admin</button></>}
+    {authMode === "LOGIN" && !mfaEnrollment && <><button className="auth-secondary" onClick={setupMfa}>Set up authenticator / show key</button><small className="password-rule">Use the setup option only for first-time authenticator setup. It validates the email and password before showing the private key.</small><div className="auth-links"><button onClick={()=>navigateAuth("FORGOT")}>Forgot password?</button><button onClick={resendVerification}>Resend verification</button></div><button className="auth-secondary" onClick={()=>navigateAuth("REGISTER")}>New Main User? Register with Admin</button></>}
     {(authMode === "REGISTER" || authMode === "FORGOT" || authMode === "RESET") && <button className="auth-secondary" onClick={()=>navigateAuth("LOGIN")}>Back to sign in</button>}
     {authMessage && <small className="auth-message" role="status">{authMessage}</small>}<small>Platform Admin: app.netpack@gmail.com. Public Admin registration is disabled; Main User registrations require verified email and Admin approval.</small></div></div>;
   return (

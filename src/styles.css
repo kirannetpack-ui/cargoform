@@ -710,13 +710,9 @@ aside .nav { height: 41px; }
 .password-rule { margin-top: -8px; }
 .show-password { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; color: #52686c; font-size: 12px; }
 .show-password input { width: auto !important; margin: 0; }
-.mfa-enrollment { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: center; padding: 16px; border: 1px solid #cfe0dd; border-radius: 10px; background: #f5faf8; }
-.mfa-enrollment p { margin: 7px 0; font-size: 12px; color: #52686c; }
-.mfa-enrollment img { width: 180px; height: 180px; border: 8px solid #fff; border-radius: 8px; }
-.mfa-enrollment details { grid-column: 1 / -1; border-top: 1px solid #d9e6e3; padding-top: 10px; }
-.mfa-enrollment summary { cursor: pointer; color: #315d58; font-size: 12px; }
-.mfa-enrollment code { display: block; overflow-wrap: anywhere; margin: 10px 0 5px; padding: 9px; border-radius: 6px; background: #fff; font-size: 12px; }
-.mfa-enrollment small { display: block; color: #6f7f82; line-height: 1.5; }
+.mfa-setup-key { display: grid; gap: 8px; padding: 14px; border: 1px solid #ead9b2; border-radius: 8px; background: #fff8e8; }
+.mfa-setup-key code { overflow-wrap: anywhere; padding: 9px; border-radius: 6px; background: #fff; font-size: 12px; letter-spacing: .08em; }
+.mfa-setup-key small { color: #6f654d; line-height: 1.5; }
 .admin-metrics { display: grid; grid-template-columns: repeat(auto-fit,minmax(145px,1fr)); gap: 12px; margin: 22px 0; }
 .admin-metrics > div { display: grid; gap: 4px; border: 1px solid #d8e2e1; background: #f7f9f9; border-radius: 10px; padding: 18px; }
 .admin-metrics b { font-size: 25px; color: #1b4a47; }
@@ -756,11 +752,6 @@ aside .nav { height: 41px; }
 .email-outbox small { color: #748387; }
 .email-outbox em { font-size: 9px; font-style: normal; color: #795f27; background: #fff3d9; padding: 5px 8px; border-radius: 15px; }
 .email-outbox button { border: 0; background: transparent; cursor: pointer; }
-@media (max-width: 620px) {
-  .mfa-enrollment { grid-template-columns: 1fr; }
-  .mfa-enrollment img { justify-self: center; }
-  .mfa-enrollment details { grid-column: 1; }
-}
 .countries {
   display: flex;
   flex-wrap: wrap;
