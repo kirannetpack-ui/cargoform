@@ -126,9 +126,9 @@ type PackingBox = {
 };
 const authModeFromPath = (): AuthMode => window.location.pathname === "/verify-email" ? "VERIFY" : window.location.pathname === "/reset-password" ? "RESET" : "LOGIN";
 const friendlyAuthError = (error: string) => ({
-  INVALID_CREDENTIALS: "The email address or password is incorrect.",
+  INVALID_CREDENTIALS: "The email address or password does not match the active account. Clear any browser-filled password and enter the exact current password.",
   EMAIL_NOT_VERIFIED: "Please verify your email address before signing in.",
-  MFA_ENROLLMENT_REQUIRED: "Authenticator setup is required for this account. Select “Set up authenticator” below.",
+  MFA_ENROLLMENT_REQUIRED: "Your email and password were accepted. Complete authenticator setup before signing in.",
   MFA_REQUIRED: "Enter the current six-digit code from your authenticator app.",
   INVALID_MFA_CODE: "That authenticator code is not valid. Wait for a new code and try again.",
   ACCOUNT_PENDING_APPROVAL: "Your registration is verified and is awaiting Platform Admin approval.",
@@ -1671,6 +1671,7 @@ function App() {
   const [authMode, setAuthMode] = useState<AuthMode>(authModeFromPath);
   const registrationMode = authMode === "REGISTER";
   const [authForm, setAuthForm] = useState({ email: "", password: "", confirmPassword: "", newPassword: "", mfaCode: "", displayName: "", legalName: "", accountType: "ORGANISATION", phone: "", dateOfBirth: "", residentialAddress: "", identityType: "Citizenship / passport", identityNumber: "", registrationNumber: "", panVat: "", registeredAddress: "", contactPerson: "" });
+  const [showPassword, setShowPassword] = useState(false);
   const [authMessage, setAuthMessage] = useState(() => authModeFromPath() === "LOGIN" ? "Checking your secure session…" : "");
   const [mfaEnrollment, setMfaEnrollment] = useState<{ secret: string; uri: string } | null>(null);
   const [sessionInfo, setSessionInfo] = useState<AuthSessionInfo | null>(null);
@@ -2212,11 +2213,11 @@ function App() {
   const setupMfa = async () => {
     setAuthMessage("Preparing authenticator setup…");
     try { const response = await fetch(`${apiBase}/auth/mfa/setup`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: authForm.email, password: authForm.password }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); setMfaEnrollment(result); setAuthMessage("Add the key below to your authenticator app, then enter its six-digit code."); }
-    catch (error) { setAuthMessage(error instanceof Error ? error.message.replaceAll("_", " ") : "MFA setup failed"); }
+    catch (error) { setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); }
   };
   const confirmMfa = async () => {
     try { const response = await fetch(`${apiBase}/auth/mfa/confirm`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: authForm.email, password: authForm.password, code: authForm.mfaCode }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); setMfaEnrollment(null); setAuthMessage("Authenticator verified. You can now sign in."); }
-    catch (error) { setAuthMessage(error instanceof Error ? error.message.replaceAll("_", " ") : "MFA confirmation failed"); }
+    catch (error) { setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); }
   };
   const refreshAdminData = async () => {
     setAdminLoading(true);
@@ -2295,7 +2296,8 @@ function App() {
   if (!loggedIn) return <div className="auth-screen"><div className={`auth-card ${registrationMode ? "registration-card" : ""}`}><div className="brand auth-brand"><span><Box size={21}/></span><b>CargoForm</b></div><p className="eyebrow">SECURE WORKSPACE</p><h1>{authMode === "REGISTER" ? "Register as a Main User" : authMode === "FORGOT" ? "Reset your password" : authMode === "RESET" ? "Choose a new password" : authMode === "VERIFY" ? "Verify your email" : "Welcome back"}</h1><p>{authMode === "REGISTER" ? "Provide the required Individual or Organisation details for Platform Admin review." : authMode === "FORGOT" ? "We will send a time-limited reset link if this account is active." : authMode === "RESET" ? "Use at least 12 characters with uppercase, lowercase and a number." : authMode === "VERIFY" ? "CargoForm is validating this secure registration link." : "Sign in to your approved Admin, Main User, Staff or Client workspace."}</p>
     {authMode === "REGISTER" && <div className="registration-fields"><label>Account type<select value={authForm.accountType} onChange={(e)=>setAuthForm({...authForm,accountType:e.target.value})}><option value="ORGANISATION">Organisation</option><option value="INDIVIDUAL">Individual</option></select></label><label>Full name<input value={authForm.displayName} onChange={(e)=>setAuthForm({...authForm,displayName:e.target.value})}/></label><label>{authForm.accountType === "ORGANISATION" ? "Registered legal name" : "Account / personal name"}<input value={authForm.legalName} onChange={(e)=>setAuthForm({...authForm,legalName:e.target.value})}/></label><label>Phone<input value={authForm.phone} onChange={(e)=>setAuthForm({...authForm,phone:e.target.value})}/></label>{authForm.accountType === "INDIVIDUAL" ? <><label>Date of birth<input type="date" value={authForm.dateOfBirth} onChange={(e)=>setAuthForm({...authForm,dateOfBirth:e.target.value})}/></label><label>Identity document type<input value={authForm.identityType} onChange={(e)=>setAuthForm({...authForm,identityType:e.target.value})}/></label><label>Identity document number<input value={authForm.identityNumber} onChange={(e)=>setAuthForm({...authForm,identityNumber:e.target.value})}/></label><label className="wide">Residential address<input value={authForm.residentialAddress} onChange={(e)=>setAuthForm({...authForm,residentialAddress:e.target.value})}/></label></> : <><label>Company registration number<input value={authForm.registrationNumber} onChange={(e)=>setAuthForm({...authForm,registrationNumber:e.target.value})}/></label><label>PAN / VAT number (if issued)<input value={authForm.panVat} onChange={(e)=>setAuthForm({...authForm,panVat:e.target.value})}/></label><label>Authorized contact person<input value={authForm.contactPerson} onChange={(e)=>setAuthForm({...authForm,contactPerson:e.target.value})}/></label><label className="wide">Registered office address<input value={authForm.registeredAddress} onChange={(e)=>setAuthForm({...authForm,registeredAddress:e.target.value})}/></label></>}</div>}
     {(authMode === "LOGIN" || authMode === "REGISTER" || authMode === "FORGOT") && <label>Email<input type="email" value={authForm.email} onChange={(e)=>setAuthForm({...authForm,email:e.target.value})} autoComplete="email"/></label>}
-    {(authMode === "LOGIN" || authMode === "REGISTER") && <label>Password<input type="password" value={authForm.password} onChange={(e)=>setAuthForm({...authForm,password:e.target.value})} autoComplete={registrationMode?"new-password":"current-password"}/></label>}
+    {(authMode === "LOGIN" || authMode === "REGISTER") && <label>Password<input type={showPassword?"text":"password"} value={authForm.password} onChange={(e)=>setAuthForm({...authForm,password:e.target.value})} autoComplete={registrationMode?"new-password":"current-password"}/></label>}
+    {(authMode === "LOGIN" || authMode === "REGISTER") && <label className="show-password"><input type="checkbox" checked={showPassword} onChange={(e)=>setShowPassword(e.target.checked)}/> Show password while checking it</label>}
     {authMode === "REGISTER" && <><label>Confirm password<input type="password" value={authForm.confirmPassword} onChange={(e)=>setAuthForm({...authForm,confirmPassword:e.target.value})} autoComplete="new-password"/></label><small className="password-rule">At least 12 characters, including uppercase, lowercase and a number.</small></>}
     {authMode === "RESET" && <><label>New password<input type="password" value={authForm.newPassword} onChange={(e)=>setAuthForm({...authForm,newPassword:e.target.value})} autoComplete="new-password"/></label><label>Confirm new password<input type="password" value={authForm.confirmPassword} onChange={(e)=>setAuthForm({...authForm,confirmPassword:e.target.value})} autoComplete="new-password"/></label></>}
     {authMode === "LOGIN" && <label>Authenticator code (when enabled)<input inputMode="numeric" maxLength={6} value={authForm.mfaCode} onChange={(e)=>setAuthForm({...authForm,mfaCode:e.target.value.replace(/\D/g,"")})}/></label>}
@@ -2305,7 +2307,7 @@ function App() {
     {authMode === "FORGOT" && <button className="auth-primary" onClick={requestPasswordReset}>Send reset link</button>}
     {authMode === "RESET" && <button className="auth-primary" onClick={resetPassword}>Update password</button>}
     {authMode === "VERIFY" && <button className="auth-primary" onClick={()=>navigateAuth("LOGIN")}>Continue to sign in</button>}
-    {authMode === "LOGIN" && !mfaEnrollment && <><button className="auth-secondary" onClick={setupMfa}>Set up authenticator</button><div className="auth-links"><button onClick={()=>navigateAuth("FORGOT")}>Forgot password?</button><button onClick={resendVerification}>Resend verification</button></div><button className="auth-secondary" onClick={()=>navigateAuth("REGISTER")}>New Main User? Register with Admin</button></>}
+    {authMode === "LOGIN" && !mfaEnrollment && <><button className="auth-secondary" onClick={setupMfa}>First sign-in: set up authenticator</button><small className="password-rule">Use the same email and password shown above. Administrator MFA remains required for account security.</small><div className="auth-links"><button onClick={()=>navigateAuth("FORGOT")}>Forgot password?</button><button onClick={resendVerification}>Resend verification</button></div><button className="auth-secondary" onClick={()=>navigateAuth("REGISTER")}>New Main User? Register with Admin</button></>}
     {(authMode === "REGISTER" || authMode === "FORGOT" || authMode === "RESET") && <button className="auth-secondary" onClick={()=>navigateAuth("LOGIN")}>Back to sign in</button>}
     {authMessage && <small className="auth-message" role="status">{authMessage}</small>}<small>Platform Admin: app.netpack@gmail.com. Public Admin registration is disabled; Main User registrations require verified email and Admin approval.</small></div></div>;
   return (

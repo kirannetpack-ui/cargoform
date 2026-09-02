@@ -708,6 +708,8 @@ aside .nav { height: 41px; }
 .auth-links button { flex: 1; border: 0; background: transparent; color: #2f6863; padding: 4px; text-decoration: underline; }
 .auth-message { padding: 10px 12px; border-radius: 7px; background: #edf6f4; color: #285a55 !important; }
 .password-rule { margin-top: -8px; }
+.show-password { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; color: #52686c; font-size: 12px; }
+.show-password input { width: auto !important; margin: 0; }
 .admin-metrics { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin: 22px 0; }
 .admin-metrics > div { display: grid; gap: 4px; border: 1px solid #d8e2e1; background: #f7f9f9; border-radius: 10px; padding: 18px; }
 .admin-metrics b { font-size: 25px; color: #1b4a47; }
