@@ -13,7 +13,7 @@ adminRouter.get("/applications", async (req, res) => {
   const status = z.enum(["DRAFT", "SUBMITTED", "APPROVED", "CHANGES_REQUESTED", "REJECTED", "SUSPENDED"]).optional().parse(req.query.status);
   const applications = await db.mainUserApplication.findMany({
     where: status ? { status } : undefined,
-    select: { id: true, organisationId: true, accountType: true, applicantEmail: true, status: true, submittedAt: true, reviewedAt: true, createdAt: true, organisation: { select: { legalName: true, panVat: true, registrationNumber: true } } },
+    select: { id: true, organisationId: true, accountType: true, applicantEmail: true, payload: true, status: true, submittedAt: true, reviewedAt: true, createdAt: true, organisation: { select: { legalName: true, panVat: true, registrationNumber: true } } },
     orderBy: { createdAt: "desc" }, take: 100,
   });
   res.json(applications);

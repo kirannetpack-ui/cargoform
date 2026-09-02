@@ -111,6 +111,10 @@ type ChatMessage = { id: string; thread: string; sender: "ADMIN" | "MAIN_USER" |
 type AppNotification = { id: string; category: string; title: string; detail: string; createdAt: string; read: boolean };
 type NotificationPreference = { event: string; email: boolean; inApp: boolean; recipient: string };
 type OutboundEmail = { id: string; event: string; from: string; to: string; subject: string; body: string; createdAt: string; status: "QUEUED" | "DRAFTED" | "SENT" | "FAILED" };
+type AuthMode = "LOGIN" | "REGISTER" | "FORGOT" | "RESET" | "VERIFY";
+type AuthSessionInfo = { user: { id: string; email: string; displayName?: string }; role: string; organisation: { id: string; legalName: string; status: string }; application?: { id: string; status: string; reviewedAt?: string } | null };
+type AdminApplication = { id: string; organisationId: string; accountType: "INDIVIDUAL" | "ORGANISATION"; applicantEmail: string; status: string; submittedAt?: string; createdAt: string; payload?: Record<string, unknown>; organisation: { legalName: string; panVat?: string; registrationNumber?: string } };
+type AdminEmailRecord = { id: string; eventKey: string; status: string; attempts: number; lastError?: string; sentAt?: string; createdAt: string };
 type PackingBox = {
   id: string;
   lengthCm: number;
@@ -120,6 +124,22 @@ type PackingBox = {
   manualCbm: number;
   allocations: Record<number, number>;
 };
+const authModeFromPath = (): AuthMode => window.location.pathname === "/verify-email" ? "VERIFY" : window.location.pathname === "/reset-password" ? "RESET" : "LOGIN";
+const friendlyAuthError = (error: string) => ({
+  INVALID_CREDENTIALS: "The email address or password is incorrect.",
+  EMAIL_NOT_VERIFIED: "Please verify your email address before signing in.",
+  MFA_ENROLLMENT_REQUIRED: "Authenticator setup is required for this account. Select “Set up authenticator” below.",
+  MFA_REQUIRED: "Enter the current six-digit code from your authenticator app.",
+  INVALID_MFA_CODE: "That authenticator code is not valid. Wait for a new code and try again.",
+  ACCOUNT_PENDING_APPROVAL: "Your registration is verified and is awaiting Platform Admin approval.",
+  ACCOUNT_CHANGES_REQUESTED: "The Platform Admin requested changes to your registration. Please contact the administrator.",
+  ACCOUNT_REJECTED: "This registration was not approved. Please contact the Platform Admin.",
+  ACCOUNT_SUSPENDED: "This account is suspended. Please contact the Platform Admin.",
+  CURRENT_PASSWORD_INCORRECT: "The current password is incorrect.",
+  INVALID_OR_EXPIRED_TOKEN: "This secure link is invalid or has expired. Request a new link.",
+  REQUEST_FAILED: "The information could not be accepted. Check every required field and the password rules.",
+  ADMIN_REGISTRATION_NOT_AVAILABLE: "The Platform Admin account cannot be registered from this public form.",
+}[error] || error.replaceAll("_", " "));
 const numeric = (value: string) =>
   Number((value.match(/-?\d+(?:\.\d+)?/) || ["0"])[0]);
 const boxMetrics = (box: PackingBox, divisor: number) => {
@@ -1648,10 +1668,18 @@ function App() {
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
   const [online, setOnline] = useState(navigator.onLine);
   const [loggedIn, setLoggedIn] = useState(false);
-  const [registrationMode, setRegistrationMode] = useState(false);
-  const [authForm, setAuthForm] = useState({ email: "", password: "", mfaCode: "", displayName: "", legalName: "", accountType: "ORGANISATION" });
-  const [authMessage, setAuthMessage] = useState("Checking your secure session…");
+  const [authMode, setAuthMode] = useState<AuthMode>(authModeFromPath);
+  const registrationMode = authMode === "REGISTER";
+  const [authForm, setAuthForm] = useState({ email: "", password: "", confirmPassword: "", newPassword: "", mfaCode: "", displayName: "", legalName: "", accountType: "ORGANISATION", phone: "", dateOfBirth: "", residentialAddress: "", identityType: "Citizenship / passport", identityNumber: "", registrationNumber: "", panVat: "", registeredAddress: "", contactPerson: "" });
+  const [authMessage, setAuthMessage] = useState(() => authModeFromPath() === "LOGIN" ? "Checking your secure session…" : "");
   const [mfaEnrollment, setMfaEnrollment] = useState<{ secret: string; uri: string } | null>(null);
+  const [sessionInfo, setSessionInfo] = useState<AuthSessionInfo | null>(null);
+  const [adminApplications, setAdminApplications] = useState<AdminApplication[]>([]);
+  const [adminEmailDelivery, setAdminEmailDelivery] = useState<AdminEmailRecord[]>([]);
+  const [adminDecisionReasons, setAdminDecisionReasons] = useState<Record<string, string>>({});
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [passwordChange, setPasswordChange] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
+  const [passwordMessage, setPasswordMessage] = useState("");
   const [profile, setProfile] = useState<MainProfile>(() => {
     try { return JSON.parse(localStorage.getItem("cargoform.v7.profile") || "null") || { accountType: "ORGANISATION", status: "DRAFT", fullName: "", dateOfBirth: "", email: "", phone: "", address: "", identityType: "Citizenship / passport", identityNumber: "", legalName: "Himalayan Cargo Workspace", registrationNumber: "", panVat: "", incorporationDate: "", registeredAddress: "", contactPerson: "" }; }
     catch { return { accountType: "ORGANISATION", status: "DRAFT", fullName: "", dateOfBirth: "", email: "", phone: "", address: "", identityType: "Citizenship / passport", identityNumber: "", legalName: "", registrationNumber: "", panVat: "", incorporationDate: "", registeredAddress: "", contactPerson: "" }; }
@@ -1692,9 +1720,31 @@ function App() {
   useEffect(() => {
     fetch(`${apiBase}/auth/me`, { credentials: "include" }).then(async (response) => {
       if (!response.ok) throw new Error();
-      setLoggedIn(true); setAuthMessage("");
-    }).catch(() => { setLoggedIn(false); setAuthMessage(""); });
+      const result = await response.json() as AuthSessionInfo;
+      setSessionInfo(result); setLoggedIn(true); setAuthMessage("");
+      if (result.role === "PLATFORM_ADMIN") setActiveSection("Admin dashboard");
+      if (result.organisation?.legalName) setOrganisation((current: typeof organisation) => ({ ...current, name: result.organisation.legalName }));
+    }).catch(() => { setSessionInfo(null); setLoggedIn(false); if (authMode === "LOGIN") setAuthMessage(""); });
   }, [apiBase]);
+  useEffect(() => {
+    if (authMode !== "VERIFY") return;
+    const token = new URLSearchParams(window.location.search).get("token");
+    if (!token) { setAuthMessage("The verification link is incomplete."); return; }
+    setAuthMessage("Verifying your email address…");
+    fetch(`${apiBase}/auth/verify-email`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ token }) })
+      .then(async (response) => { const result = await response.json(); if (!response.ok) throw new Error(result.error || "REQUEST_FAILED"); setAuthMessage("Email verified. Your registration is now awaiting Platform Admin approval."); })
+      .catch((error) => setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")));
+  }, [apiBase, authMode]);
+  useEffect(() => {
+    if (!loggedIn || sessionInfo?.role !== "PLATFORM_ADMIN") return;
+    setAdminLoading(true);
+    Promise.all([
+      fetch(`${apiBase}/admin/applications`, { credentials: "include" }).then(async (response) => { if (!response.ok) throw new Error("APPLICATIONS_UNAVAILABLE"); return response.json(); }),
+      fetch(`${apiBase}/admin/email-delivery`, { credentials: "include" }).then(async (response) => { if (!response.ok) throw new Error("EMAIL_DELIVERY_UNAVAILABLE"); return response.json(); }),
+    ]).then(([applications, delivery]) => { setAdminApplications(applications); setAdminEmailDelivery(delivery); })
+      .catch((error) => setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")))
+      .finally(() => setAdminLoading(false));
+  }, [apiBase, loggedIn, sessionInfo?.role]);
   useEffect(() => {
     localStorage.setItem("cargoform.v3.shipment", JSON.stringify(data));
     localStorage.setItem("cargoform.v3.status", status);
@@ -2118,7 +2168,13 @@ function App() {
   const addBillingRecord = () => setBilling((items) => [{ id: crypto.randomUUID(), reference: `INV-${String(items.length + 1).padStart(4, "0")}`, party: "Main User organisation", amount: 0, currency: organisation.currency, dueDate: new Date().toISOString().slice(0, 10), status: "DRAFT" }, ...items]);
   const installApp = async () => { if (!installPrompt) return; await installPrompt.prompt(); const result = await installPrompt.userChoice; if (result.outcome === "accepted") setInstallPrompt(null); };
   const openDocument = (kind: DocType) => { setDoc(kind); setActiveSection("Shipment data"); };
+  const navigateAuth = (mode: AuthMode) => {
+    setAuthMode(mode); setMfaEnrollment(null); setAuthMessage("");
+    const path = mode === "RESET" ? "/reset-password" : mode === "VERIFY" ? "/verify-email" : "/";
+    if (mode !== "RESET" && mode !== "VERIFY") window.history.replaceState({}, "", path);
+  };
   const submitAuthentication = async () => {
+    if (registrationMode && authForm.password !== authForm.confirmPassword) { setAuthMessage("The password confirmation does not match."); return; }
     setAuthMessage("Please wait…");
     const route = registrationMode ? "register" : "login";
     const payload = registrationMode ? authForm : { email: authForm.email, password: authForm.password, mfaCode: authForm.mfaCode || undefined };
@@ -2126,9 +2182,32 @@ function App() {
       const response = await fetch(`${apiBase}/auth/${route}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "REQUEST_FAILED");
-      if (registrationMode) { setAuthMessage("Registration received. Please open the verification email before signing in."); setRegistrationMode(false); }
-      else { setLoggedIn(true); setAuthMessage(""); }
-    } catch (error) { const message = error instanceof Error ? error.message : "Unable to continue"; setAuthMessage(message === "Failed to fetch" ? "Registration service is not connected. Please try again after the staging API is deployed, or contact the administrator." : message.replaceAll("_", " ")); }
+      if (registrationMode) { navigateAuth("LOGIN"); setAuthMessage("Registration received. Open the verification email sent to your address, then wait for Platform Admin approval."); }
+      else {
+        const sessionResponse = await fetch(`${apiBase}/auth/me`, { credentials: "include" });
+        const session = await sessionResponse.json() as AuthSessionInfo;
+        setSessionInfo(session); setLoggedIn(true); setAuthMessage("");
+        if (session.role === "PLATFORM_ADMIN") setActiveSection("Admin dashboard");
+      }
+    } catch (error) { const message = error instanceof Error ? error.message : "REQUEST_FAILED"; setAuthMessage(message === "Failed to fetch" ? "CargoForm could not reach the secure account service. Please try again." : friendlyAuthError(message)); }
+  };
+  const requestPasswordReset = async () => {
+    setAuthMessage("Requesting a secure reset link…");
+    try { const response = await fetch(`${apiBase}/auth/forgot-password`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: authForm.email }) }); if (!response.ok) throw new Error("REQUEST_FAILED"); setAuthMessage("If an active account uses that address, a password reset email has been queued."); }
+    catch (error) { setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); }
+  };
+  const resendVerification = async () => {
+    setAuthMessage("Requesting a new verification email…");
+    try { const response = await fetch(`${apiBase}/auth/resend-verification`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: authForm.email }) }); if (!response.ok) throw new Error("REQUEST_FAILED"); setAuthMessage("If the registration is awaiting verification, a new email has been queued."); }
+    catch (error) { setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); }
+  };
+  const resetPassword = async () => {
+    if (authForm.newPassword !== authForm.confirmPassword) { setAuthMessage("The password confirmation does not match."); return; }
+    const token = new URLSearchParams(window.location.search).get("token");
+    if (!token) { setAuthMessage("The reset link is incomplete."); return; }
+    setAuthMessage("Updating your password…");
+    try { const response = await fetch(`${apiBase}/auth/reset-password`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ token, password: authForm.newPassword }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error || "REQUEST_FAILED"); window.history.replaceState({}, "", "/"); setAuthMode("LOGIN"); setAuthForm((current) => ({ ...current, password: "", newPassword: "", confirmPassword: "" })); setAuthMessage("Password updated. Sign in with your new password."); }
+    catch (error) { setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); }
   };
   const setupMfa = async () => {
     setAuthMessage("Preparing authenticator setup…");
@@ -2138,6 +2217,32 @@ function App() {
   const confirmMfa = async () => {
     try { const response = await fetch(`${apiBase}/auth/mfa/confirm`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: authForm.email, password: authForm.password, code: authForm.mfaCode }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); setMfaEnrollment(null); setAuthMessage("Authenticator verified. You can now sign in."); }
     catch (error) { setAuthMessage(error instanceof Error ? error.message.replaceAll("_", " ") : "MFA confirmation failed"); }
+  };
+  const refreshAdminData = async () => {
+    setAdminLoading(true);
+    try {
+      const [applicationsResponse, emailResponse] = await Promise.all([fetch(`${apiBase}/admin/applications`, { credentials: "include" }), fetch(`${apiBase}/admin/email-delivery`, { credentials: "include" })]);
+      if (!applicationsResponse.ok || !emailResponse.ok) throw new Error("REQUEST_FAILED");
+      setAdminApplications(await applicationsResponse.json()); setAdminEmailDelivery(await emailResponse.json());
+    } catch (error) { setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); }
+    finally { setAdminLoading(false); }
+  };
+  const decideApplication = async (applicationId: string, decision: "APPROVED" | "CHANGES_REQUESTED" | "REJECTED") => {
+    const reason = adminDecisionReasons[applicationId]?.trim();
+    if (!reason || reason.length < 5) { setAuthMessage("Enter a clear review reason of at least five characters."); return; }
+    setAdminLoading(true);
+    try { const response = await fetch(`${apiBase}/admin/applications/${applicationId}/decision`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision, reason }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error || "REQUEST_FAILED"); setAuthMessage(`Registration ${decision.toLowerCase().replace("_", " ")}.`); await refreshAdminData(); }
+    catch (error) { setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); setAdminLoading(false); }
+  };
+  const connectGmail = async () => {
+    try { const response = await fetch(`${apiBase}/integrations/gmail/start`, { credentials: "include" }); const result = await response.json(); if (!response.ok || !result.authorizationUrl) throw new Error(result.error || "REQUEST_FAILED"); window.location.assign(result.authorizationUrl); }
+    catch (error) { setAuthMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); }
+  };
+  const changePassword = async () => {
+    if (passwordChange.newPassword !== passwordChange.confirmPassword) { setPasswordMessage("The password confirmation does not match."); return; }
+    setPasswordMessage("Updating password…");
+    try { const response = await fetch(`${apiBase}/auth/change-password`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(passwordChange) }); const result = await response.json(); if (!response.ok) throw new Error(result.error || "REQUEST_FAILED"); setPasswordChange({ currentPassword: "", newPassword: "", confirmPassword: "" }); setPasswordMessage("Password changed. Other active sessions have been revoked."); }
+    catch (error) { setPasswordMessage(friendlyAuthError(error instanceof Error ? error.message : "REQUEST_FAILED")); }
   };
   const notify = (category: string, title: string, detail: string) => setNotifications((items) => [{ id: crypto.randomUUID(), category, title, detail, createdAt: new Date().toISOString(), read: false }, ...items]);
   const submitProfile = () => {
@@ -2154,6 +2259,14 @@ function App() {
     setMessageBody("");
   };
   const renderModule = () => {
+    if (activeSection === "Admin dashboard") {
+      const pending = adminApplications.filter((item) => item.status === "SUBMITTED" || item.status === "CHANGES_REQUESTED").length;
+      const approved = adminApplications.filter((item) => item.status === "APPROVED").length;
+      const failedEmails = adminEmailDelivery.filter((item) => item.status === "FAILED").length;
+      return <section className="module-page"><div className="module-head"><div><p className="eyebrow">PLATFORM ADMIN</p><h2>Administration dashboard</h2><small>Account governance is separated from confidential shipment content.</small></div><button disabled={adminLoading} onClick={refreshAdminData}>{adminLoading ? "Refreshing…" : "Refresh"}</button></div><div className="admin-metrics"><div><b>{pending}</b><span>Awaiting review</span></div><div><b>{approved}</b><span>Approved Main Users</span></div><div><b>{adminEmailDelivery.filter((item)=>item.status === "QUEUED").length}</b><span>Queued emails</span></div><div className={failedEmails ? "attention" : ""}><b>{failedEmails}</b><span>Failed emails</span></div></div><div className="admin-callout"><div><h3>Production email connection</h3><p>Authorize the exact app.netpack@gmail.com mailbox. CargoForm stores OAuth tokens, never the Gmail password.</p></div><button onClick={connectGmail}>Connect Gmail</button></div>{authMessage && <p className="status-message">{authMessage}</p>}</section>;
+    }
+    if (activeSection === "Main User approvals") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">ACCOUNT GOVERNANCE</p><h2>Main User registrations</h2><small>Review verified applicants and record a reason for every decision.</small></div><button disabled={adminLoading} onClick={refreshAdminData}>{adminLoading ? "Refreshing…" : "Refresh"}</button></div>{adminApplications.length === 0 ? <div className="empty-state">No Main User registrations have been submitted.</div> : <div className="application-list">{adminApplications.map((application) => <article className="application-card" key={application.id}><div className="application-head"><div><h3>{application.organisation.legalName}</h3><p>{application.applicantEmail} · {application.accountType.toLowerCase()}</p></div><span className={`status ${application.status.toLowerCase()}`}>{application.status.replace("_", " ")}</span></div><dl><div><dt>Registration no.</dt><dd>{application.organisation.registrationNumber || "Not supplied"}</dd></div><div><dt>PAN / VAT</dt><dd>{application.organisation.panVat || "Not supplied"}</dd></div><div><dt>Phone</dt><dd>{String(application.payload?.phone || "Not supplied")}</dd></div><div><dt>Submitted</dt><dd>{application.submittedAt ? new Date(application.submittedAt).toLocaleString() : "Email verification pending"}</dd></div></dl>{application.status === "SUBMITTED" || application.status === "CHANGES_REQUESTED" ? <><label>Review reason<textarea value={adminDecisionReasons[application.id] || ""} onChange={(event)=>setAdminDecisionReasons((current)=>({ ...current, [application.id]: event.target.value }))} placeholder="Record the evidence reviewed and reason for this decision."/></label><div className="decision-actions"><button disabled={adminLoading} onClick={()=>decideApplication(application.id,"APPROVED")}>Approve Main User</button><button disabled={adminLoading} onClick={()=>decideApplication(application.id,"CHANGES_REQUESTED")}>Request changes</button><button className="danger" disabled={adminLoading} onClick={()=>decideApplication(application.id,"REJECTED")}>Reject</button></div></> : null}</article>)}</div>}{authMessage && <p className="status-message">{authMessage}</p>}</section>;
+    if (activeSection === "Email delivery") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">DELIVERY OPERATIONS</p><h2>Email delivery monitor</h2><small>Verification, password reset, registration and operational messages.</small></div><div className="button-pair"><button onClick={connectGmail}>Connect Gmail</button><button disabled={adminLoading} onClick={refreshAdminData}>Refresh</button></div></div>{adminEmailDelivery.length === 0 ? <div className="empty-state">No email delivery records.</div> : <div className="record-list">{adminEmailDelivery.map((item)=><div className="record-row" key={item.id}><div><b>{item.eventKey}</b><small>{new Date(item.createdAt).toLocaleString()}{item.lastError ? ` · ${item.lastError}` : ""}</small></div><span className={`status ${item.status.toLowerCase()}`}>{item.status}</span><small>{item.attempts} attempt{item.attempts === 1 ? "" : "s"}</small></div>)}</div>}</section>;
     if (activeSection === "Profile") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">MAIN USER ACCOUNT</p><h2>Profile and Admin registration</h2><small>Status: {profile.status.replace("_", " ")}</small></div><button disabled={profile.status === "SUBMITTED"} onClick={submitProfile}>{profile.status === "SUBMITTED" ? "Awaiting Admin review" : "Submit to Admin"}</button></div><div className="account-type"><button className={profile.accountType === "INDIVIDUAL" ? "chosen" : ""} onClick={()=>setProfile({...profile,accountType:"INDIVIDUAL",status:"DRAFT"})}>Individual</button><button className={profile.accountType === "ORGANISATION" ? "chosen" : ""} onClick={()=>setProfile({...profile,accountType:"ORGANISATION",status:"DRAFT"})}>Organisation</button></div><div className="settings-grid profile-fields">{profile.accountType === "INDIVIDUAL" ? <><label>Full legal name<input value={profile.fullName} onChange={(e)=>setProfile({...profile,fullName:e.target.value,status:"DRAFT"})}/></label><label>Date of birth<input type="date" value={profile.dateOfBirth} onChange={(e)=>setProfile({...profile,dateOfBirth:e.target.value,status:"DRAFT"})}/></label><label>Email<input type="email" value={profile.email} onChange={(e)=>setProfile({...profile,email:e.target.value,status:"DRAFT"})}/></label><label>Phone<input value={profile.phone} onChange={(e)=>setProfile({...profile,phone:e.target.value,status:"DRAFT"})}/></label><label className="wide">Residential address<input value={profile.address} onChange={(e)=>setProfile({...profile,address:e.target.value,status:"DRAFT"})}/></label><label>Identity document type<input value={profile.identityType} onChange={(e)=>setProfile({...profile,identityType:e.target.value,status:"DRAFT"})}/></label><label>Identity document number<input value={profile.identityNumber} onChange={(e)=>setProfile({...profile,identityNumber:e.target.value,status:"DRAFT"})}/></label></> : <><label>Registered legal name<input value={profile.legalName} onChange={(e)=>setProfile({...profile,legalName:e.target.value,status:"DRAFT"})}/></label><label>Company registration number<input value={profile.registrationNumber} onChange={(e)=>setProfile({...profile,registrationNumber:e.target.value,status:"DRAFT"})}/></label><label>PAN / VAT number<input value={profile.panVat} onChange={(e)=>setProfile({...profile,panVat:e.target.value,status:"DRAFT"})}/></label><label>Date of incorporation<input type="date" value={profile.incorporationDate} onChange={(e)=>setProfile({...profile,incorporationDate:e.target.value,status:"DRAFT"})}/></label><label className="wide">Registered office address<input value={profile.registeredAddress} onChange={(e)=>setProfile({...profile,registeredAddress:e.target.value,status:"DRAFT"})}/></label><label>Authorized contact person<input value={profile.contactPerson} onChange={(e)=>setProfile({...profile,contactPerson:e.target.value,status:"DRAFT"})}/></label><label>Official email<input type="email" value={profile.email} onChange={(e)=>setProfile({...profile,email:e.target.value,status:"DRAFT"})}/></label><label>Official phone<input value={profile.phone} onChange={(e)=>setProfile({...profile,phone:e.target.value,status:"DRAFT"})}/></label></>}</div><p className="privacy-note">Identity and company evidence must be uploaded to secured backend storage in production. Sensitive documents are deliberately not stored in this browser-only MVP.</p></section>;
     if (activeSection === "Messages") {
       const clientThreads = contacts.filter((item)=>item.role === "CHILD_ACCOUNT");
@@ -2173,11 +2286,28 @@ function App() {
       return <section className="module-page"><div className="module-head"><div><p className="eyebrow">TEMPLATES</p><h2>Documents</h2></div></div><div className="module-cards">{docs.map(([kind,name]) => <button key={kind} onClick={() => openDocument(kind)}><FileText/><b>{name}</b><small>Open editable A4 draft</small></button>)}</div></section>;
     }
     if (activeSection === "Billing & payments") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">FINANCE</p><h2>Billing & payments</h2><small>Platform subscription ledger. Client freight invoices remain a separate Main User ledger.</small></div><button onClick={addBillingRecord}>New invoice</button></div><div className="payment-options"><b>Payment priority</b><span>Bank transfer / connectIPS · eSewa ePay · Khalti</span></div>{billing.length === 0 ? <div className="empty-state">No billing records.</div> : <div className="record-list">{billing.map((item) => <div className="record-editor billing-row" key={item.id}><input value={item.reference} onChange={(e) => setBilling((all)=>all.map((x)=>x.id===item.id?{...x,reference:e.target.value}:x))}/><input value={item.party} onChange={(e) => setBilling((all)=>all.map((x)=>x.id===item.id?{...x,party:e.target.value}:x))}/><input type="number" value={item.amount} onChange={(e) => setBilling((all)=>all.map((x)=>x.id===item.id?{...x,amount:Number(e.target.value)}:x))}/><select value={item.status} onChange={(e)=>setBilling((all)=>all.map((x)=>x.id===item.id?{...x,status:e.target.value as BillingRecord["status"]}:x))}><option>DRAFT</option><option>ISSUED</option><option>PAID</option><option>VOID</option></select><button onClick={()=>setBilling((all)=>all.filter((x)=>x.id!==item.id))}>Delete</button></div>)}</div>}</section>;
-    if (activeSection === "Settings") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">WORKSPACE</p><h2>Organisation settings</h2></div>{installPrompt && <button onClick={installApp}>Install CargoForm app</button>}</div><div className="settings-grid"><label>Organisation name<input value={organisation.name} onChange={(e)=>setOrganisation({...organisation,name:e.target.value})}/></label><label>PAN / registration<input value={organisation.pan} onChange={(e)=>setOrganisation({...organisation,pan:e.target.value})}/></label><label>Base currency<input value={organisation.currency} onChange={(e)=>setOrganisation({...organisation,currency:e.target.value.toUpperCase()})}/></label><label>Timezone<input value={organisation.timezone} onChange={(e)=>setOrganisation({...organisation,timezone:e.target.value})}/></label></div><div className={`offline-state ${online ? "online" : "offline"}`}><b>{online ? "Online" : "Offline mode"}</b><span>{online ? "Changes are saved on this device." : "The cached app remains available; network submissions wait until connectivity returns."}</span></div></section>;
+    if (activeSection === "Settings") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">WORKSPACE</p><h2>Organisation and security settings</h2></div>{installPrompt && <button onClick={installApp}>Install CargoForm app</button>}</div><div className="settings-grid"><label>Organisation name<input value={organisation.name} onChange={(e)=>setOrganisation({...organisation,name:e.target.value})}/></label><label>PAN / registration<input value={organisation.pan} onChange={(e)=>setOrganisation({...organisation,pan:e.target.value})}/></label><label>Base currency<input value={organisation.currency} onChange={(e)=>setOrganisation({...organisation,currency:e.target.value.toUpperCase()})}/></label><label>Timezone<input value={organisation.timezone} onChange={(e)=>setOrganisation({...organisation,timezone:e.target.value})}/></label></div><div className="security-panel"><div><h3>Change password</h3><p>Use at least 12 characters with uppercase, lowercase and a number.</p></div><label>Current password<input type="password" autoComplete="current-password" value={passwordChange.currentPassword} onChange={(e)=>setPasswordChange({...passwordChange,currentPassword:e.target.value})}/></label><label>New password<input type="password" autoComplete="new-password" value={passwordChange.newPassword} onChange={(e)=>setPasswordChange({...passwordChange,newPassword:e.target.value})}/></label><label>Confirm new password<input type="password" autoComplete="new-password" value={passwordChange.confirmPassword} onChange={(e)=>setPasswordChange({...passwordChange,confirmPassword:e.target.value})}/></label><button onClick={changePassword}>Update password</button>{passwordMessage && <small>{passwordMessage}</small>}</div><div className={`offline-state ${online ? "online" : "offline"}`}><b>{online ? "Online" : "Offline mode"}</b><span>{online ? "Changes are saved on this device." : "The cached app remains available; network submissions wait until connectivity returns."}</span></div></section>;
     return null;
   };
-  const sections = ["Shipment data", "Shipment history", "Staffs", "Clients", "Carriers", "Documents", "Profile", "Messages", "Notifications", "Email setup", "Billing & payments", "Settings"];
-  if (!loggedIn) return <div className="auth-screen"><div className="auth-card"><div className="brand auth-brand"><span><Box size={21}/></span><b>CargoForm</b></div><p className="eyebrow">SECURE WORKSPACE</p><h1>{registrationMode ? "Register as a Main User" : "Welcome back"}</h1><p>{registrationMode ? "Create an Individual or Organisation account for Platform Admin review." : "Sign in to your approved Main User, Staff or Client workspace."}</p>{registrationMode && <><label>Account type<select value={authForm.accountType} onChange={(e)=>setAuthForm({...authForm,accountType:e.target.value})}><option value="ORGANISATION">Organisation</option><option value="INDIVIDUAL">Individual</option></select></label><label>Full name<input value={authForm.displayName} onChange={(e)=>setAuthForm({...authForm,displayName:e.target.value})}/></label><label>{authForm.accountType === "ORGANISATION" ? "Registered legal name" : "Account name"}<input value={authForm.legalName} onChange={(e)=>setAuthForm({...authForm,legalName:e.target.value})}/></label></>}<label>Email<input type="email" value={authForm.email} onChange={(e)=>setAuthForm({...authForm,email:e.target.value})} autoComplete="email"/></label><label>Password<input type="password" value={authForm.password} onChange={(e)=>setAuthForm({...authForm,password:e.target.value})} autoComplete={registrationMode?"new-password":"current-password"}/></label>{!registrationMode && <label>Authenticator code (when enabled)<input inputMode="numeric" maxLength={6} value={authForm.mfaCode} onChange={(e)=>setAuthForm({...authForm,mfaCode:e.target.value.replace(/\D/g,"")})}/></label>}{mfaEnrollment && <div className="privacy-note"><b>Authenticator setup key</b><br/><code>{mfaEnrollment.secret}</code><br/>Keep this key private. Enter the current six-digit code above and confirm.</div>}<button className="auth-primary" onClick={mfaEnrollment?confirmMfa:submitAuthentication}>{mfaEnrollment?"Confirm authenticator":registrationMode?"Register securely":"Sign in"}</button>{!registrationMode && !mfaEnrollment && <button className="auth-secondary" onClick={setupMfa}>Set up required MFA</button>}<button className="auth-secondary" onClick={()=>{setRegistrationMode((value)=>!value);setMfaEnrollment(null);setAuthMessage("");}}>{registrationMode ? "Already registered? Sign in" : "New Main User? Register with Admin"}</button>{authMessage && <small>{authMessage}</small>}<small>Admin email: app.netpack@gmail.com. Admin accounts are created only through the protected one-time server bootstrap; public Admin registration is disabled.</small></div></div>;
+  const sections = sessionInfo?.role === "PLATFORM_ADMIN"
+    ? ["Admin dashboard", "Main User approvals", "Email delivery", "Notifications", "Messages", "Billing & payments", "Settings"]
+    : ["Shipment data", "Shipment history", "Staffs", "Clients", "Carriers", "Documents", "Profile", "Messages", "Notifications", "Email setup", "Billing & payments", "Settings"];
+  if (!loggedIn) return <div className="auth-screen"><div className={`auth-card ${registrationMode ? "registration-card" : ""}`}><div className="brand auth-brand"><span><Box size={21}/></span><b>CargoForm</b></div><p className="eyebrow">SECURE WORKSPACE</p><h1>{authMode === "REGISTER" ? "Register as a Main User" : authMode === "FORGOT" ? "Reset your password" : authMode === "RESET" ? "Choose a new password" : authMode === "VERIFY" ? "Verify your email" : "Welcome back"}</h1><p>{authMode === "REGISTER" ? "Provide the required Individual or Organisation details for Platform Admin review." : authMode === "FORGOT" ? "We will send a time-limited reset link if this account is active." : authMode === "RESET" ? "Use at least 12 characters with uppercase, lowercase and a number." : authMode === "VERIFY" ? "CargoForm is validating this secure registration link." : "Sign in to your approved Admin, Main User, Staff or Client workspace."}</p>
+    {authMode === "REGISTER" && <div className="registration-fields"><label>Account type<select value={authForm.accountType} onChange={(e)=>setAuthForm({...authForm,accountType:e.target.value})}><option value="ORGANISATION">Organisation</option><option value="INDIVIDUAL">Individual</option></select></label><label>Full name<input value={authForm.displayName} onChange={(e)=>setAuthForm({...authForm,displayName:e.target.value})}/></label><label>{authForm.accountType === "ORGANISATION" ? "Registered legal name" : "Account / personal name"}<input value={authForm.legalName} onChange={(e)=>setAuthForm({...authForm,legalName:e.target.value})}/></label><label>Phone<input value={authForm.phone} onChange={(e)=>setAuthForm({...authForm,phone:e.target.value})}/></label>{authForm.accountType === "INDIVIDUAL" ? <><label>Date of birth<input type="date" value={authForm.dateOfBirth} onChange={(e)=>setAuthForm({...authForm,dateOfBirth:e.target.value})}/></label><label>Identity document type<input value={authForm.identityType} onChange={(e)=>setAuthForm({...authForm,identityType:e.target.value})}/></label><label>Identity document number<input value={authForm.identityNumber} onChange={(e)=>setAuthForm({...authForm,identityNumber:e.target.value})}/></label><label className="wide">Residential address<input value={authForm.residentialAddress} onChange={(e)=>setAuthForm({...authForm,residentialAddress:e.target.value})}/></label></> : <><label>Company registration number<input value={authForm.registrationNumber} onChange={(e)=>setAuthForm({...authForm,registrationNumber:e.target.value})}/></label><label>PAN / VAT number (if issued)<input value={authForm.panVat} onChange={(e)=>setAuthForm({...authForm,panVat:e.target.value})}/></label><label>Authorized contact person<input value={authForm.contactPerson} onChange={(e)=>setAuthForm({...authForm,contactPerson:e.target.value})}/></label><label className="wide">Registered office address<input value={authForm.registeredAddress} onChange={(e)=>setAuthForm({...authForm,registeredAddress:e.target.value})}/></label></>}</div>}
+    {(authMode === "LOGIN" || authMode === "REGISTER" || authMode === "FORGOT") && <label>Email<input type="email" value={authForm.email} onChange={(e)=>setAuthForm({...authForm,email:e.target.value})} autoComplete="email"/></label>}
+    {(authMode === "LOGIN" || authMode === "REGISTER") && <label>Password<input type="password" value={authForm.password} onChange={(e)=>setAuthForm({...authForm,password:e.target.value})} autoComplete={registrationMode?"new-password":"current-password"}/></label>}
+    {authMode === "REGISTER" && <><label>Confirm password<input type="password" value={authForm.confirmPassword} onChange={(e)=>setAuthForm({...authForm,confirmPassword:e.target.value})} autoComplete="new-password"/></label><small className="password-rule">At least 12 characters, including uppercase, lowercase and a number.</small></>}
+    {authMode === "RESET" && <><label>New password<input type="password" value={authForm.newPassword} onChange={(e)=>setAuthForm({...authForm,newPassword:e.target.value})} autoComplete="new-password"/></label><label>Confirm new password<input type="password" value={authForm.confirmPassword} onChange={(e)=>setAuthForm({...authForm,confirmPassword:e.target.value})} autoComplete="new-password"/></label></>}
+    {authMode === "LOGIN" && <label>Authenticator code (when enabled)<input inputMode="numeric" maxLength={6} value={authForm.mfaCode} onChange={(e)=>setAuthForm({...authForm,mfaCode:e.target.value.replace(/\D/g,"")})}/></label>}
+    {mfaEnrollment && <div className="privacy-note"><b>Authenticator setup key</b><br/><code>{mfaEnrollment.secret}</code><br/>Keep this key private. Add it to an authenticator app, then enter the current six-digit code.</div>}
+    {authMode === "LOGIN" && <button className="auth-primary" onClick={mfaEnrollment?confirmMfa:submitAuthentication}>{mfaEnrollment?"Confirm authenticator":"Sign in"}</button>}
+    {authMode === "REGISTER" && <button className="auth-primary" onClick={submitAuthentication}>Submit secure registration</button>}
+    {authMode === "FORGOT" && <button className="auth-primary" onClick={requestPasswordReset}>Send reset link</button>}
+    {authMode === "RESET" && <button className="auth-primary" onClick={resetPassword}>Update password</button>}
+    {authMode === "VERIFY" && <button className="auth-primary" onClick={()=>navigateAuth("LOGIN")}>Continue to sign in</button>}
+    {authMode === "LOGIN" && !mfaEnrollment && <><button className="auth-secondary" onClick={setupMfa}>Set up authenticator</button><div className="auth-links"><button onClick={()=>navigateAuth("FORGOT")}>Forgot password?</button><button onClick={resendVerification}>Resend verification</button></div><button className="auth-secondary" onClick={()=>navigateAuth("REGISTER")}>New Main User? Register with Admin</button></>}
+    {(authMode === "REGISTER" || authMode === "FORGOT" || authMode === "RESET") && <button className="auth-secondary" onClick={()=>navigateAuth("LOGIN")}>Back to sign in</button>}
+    {authMessage && <small className="auth-message" role="status">{authMessage}</small>}<small>Platform Admin: app.netpack@gmail.com. Public Admin registration is disabled; Main User registrations require verified email and Admin approval.</small></div></div>;
   return (
     <div className="app">
       <aside>
@@ -2207,18 +2337,17 @@ function App() {
             Sources reviewed 17 Aug 2026
           </small>
         </div>
-        <button className="logout-button" onClick={async()=>{await fetch(`${apiBase}/auth/logout`,{method:"POST",credentials:"include"});setLoggedIn(false);}}>
+        <button className="logout-button" onClick={async()=>{await fetch(`${apiBase}/auth/logout`,{method:"POST",credentials:"include"});setSessionInfo(null);setLoggedIn(false);setActiveSection("Shipment data");}}>
           Logout
         </button>
       </aside>
       <main>
         <header>
           <div>
-            <p className="eyebrow">NEW EXPORT PACK</p>
-            <h1>One shipment. Every document.</h1>
+            <p className="eyebrow">{sessionInfo?.role === "PLATFORM_ADMIN" ? "PLATFORM CONTROL" : "NEW EXPORT PACK"}</p>
+            <h1>{sessionInfo?.role === "PLATFORM_ADMIN" ? "CargoForm administration" : "One shipment. Every document."}</h1>
             <p>
-              Enter shipment data once, choose the right origin route, then edit
-              the generated document before export.
+              {sessionInfo?.role === "PLATFORM_ADMIN" ? "Approve Main Users, monitor delivery and govern platform access." : "Enter shipment data once, choose the right origin route, then edit the generated document before export."}
             </p>
           </div>
           <div className="saved">
