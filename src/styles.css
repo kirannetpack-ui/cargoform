@@ -734,6 +734,8 @@ aside .nav { height: 41px; }
 .application-card dt { font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: #809093; }
 .application-card dd { margin: 5px 0 0; font-size: 11px; }
 .application-card textarea { min-height: 72px; resize: vertical; }
+.user-management-card .settings-grid { grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); margin: 16px 0; }
+.user-management-card input[readonly] { background: #f1f4f4; color: #617174; }
 .decision-actions, .button-pair { display: flex; gap: 8px; flex-wrap: wrap; }
 .decision-actions .danger { color: #8d3229; border-color: #d9a49d; background: #fff7f5; }
 .status-message { padding: 10px 12px; border-radius: 7px; background: #eef7f4; color: #285b55; font-size: 12px; }

@@ -11,26 +11,18 @@ import { publishNotification } from "./notification-service.js";
 export const authRouter = Router();
 const passwordSchema = z.string().min(12).max(128).regex(/[a-z]/).regex(/[A-Z]/).regex(/[0-9]/);
 const emailSchema = z.string().email().transform((value) => value.trim().toLowerCase());
+const normalizePhone = (value: string) => {
+  const trimmed = value.trim();
+  const prefix = trimmed.startsWith("+") ? "+" : "";
+  return prefix + trimmed.replace(/\D/g, "");
+};
+const phoneSchema = z.string().trim().min(7).max(30).transform(normalizePhone).refine((value) => /^\+?\d{7,15}$/.test(value), "Enter a valid mobile number");
 const registrationSchema = z.object({
   email: emailSchema,
   displayName: z.string().trim().min(2).max(100),
   password: passwordSchema,
-  accountType: z.enum(["INDIVIDUAL", "ORGANISATION"]),
-  legalName: z.string().trim().min(2).max(160),
-  phone: z.string().trim().min(7).max(30),
-  dateOfBirth: z.string().trim().max(10).optional(),
-  residentialAddress: z.string().trim().max(500).optional(),
-  identityType: z.string().trim().max(80).optional(),
-  identityNumber: z.string().trim().max(100).optional(),
-  registrationNumber: z.string().trim().max(100).optional(),
-  panVat: z.string().trim().max(100).optional(),
-  registeredAddress: z.string().trim().max(500).optional(),
-  contactPerson: z.string().trim().max(100).optional(),
-}).superRefine((value, context) => {
-  const required: Array<[string, string | undefined]> = value.accountType === "INDIVIDUAL"
-    ? [["dateOfBirth", value.dateOfBirth], ["residentialAddress", value.residentialAddress], ["identityType", value.identityType], ["identityNumber", value.identityNumber]]
-    : [["registrationNumber", value.registrationNumber], ["registeredAddress", value.registeredAddress], ["contactPerson", value.contactPerson]];
-  for (const [path, field] of required) if (!field) context.addIssue({ code: z.ZodIssueCode.custom, path: [path], message: "Required" });
+  phone: phoneSchema,
+  companyName: z.string().trim().max(160).optional().transform((value) => value || undefined),
 });
 
 async function issueToken(userId: string, purpose: "VERIFY_EMAIL" | "RESET_PASSWORD") {
@@ -48,16 +40,18 @@ function accountSignature(senderName: string) {
 authRouter.post("/register", async (req, res) => {
   const input = registrationSchema.parse(req.body);
   if (input.email === config.PLATFORM_ADMIN_EMAIL.toLowerCase()) return res.status(403).json({ error: "ADMIN_REGISTRATION_NOT_AVAILABLE" });
-  if (await db.user.findUnique({ where: { email: input.email } })) return res.status(202).json({ accepted: true });
+  if (await db.user.findFirst({ where: { OR: [{ email: input.email }, { phone: input.phone }] } })) return res.status(202).json({ accepted: true });
   const passwordHash = await hash(input.password);
+  const accountName = input.companyName || input.displayName;
+  const accountType = input.companyName ? "ORGANISATION" : "INDIVIDUAL";
   const result = await db.$transaction(async (tx) => {
-    const organisation = await tx.organisation.create({ data: { legalName: input.legalName, registrationNumber: input.registrationNumber || null, panVat: input.panVat || null } });
-    const user = await tx.user.create({ data: { email: input.email, displayName: input.displayName, credential: { create: { passwordHash } }, memberships: { create: { organisationId: organisation.id, role: "OWNER" } } } });
-    await tx.mainUserApplication.create({ data: { organisationId: organisation.id, accountType: input.accountType, applicantEmail: input.email, payload: { displayName: input.displayName, phone: input.phone, dateOfBirth: input.dateOfBirth, residentialAddress: input.residentialAddress, identityType: input.identityType, identityNumber: input.identityNumber, registeredAddress: input.registeredAddress, contactPerson: input.contactPerson }, status: "DRAFT" } });
+    const organisation = await tx.organisation.create({ data: { legalName: accountName } });
+    const user = await tx.user.create({ data: { email: input.email, phone: input.phone, displayName: input.displayName, credential: { create: { passwordHash } }, memberships: { create: { organisationId: organisation.id, role: "OWNER" } } } });
+    await tx.mainUserApplication.create({ data: { organisationId: organisation.id, accountType, applicantEmail: input.email, payload: { displayName: input.displayName, phone: input.phone, companyName: input.companyName || null }, status: "DRAFT" } });
     return { organisation, user };
   });
   const token = await issueToken(result.user.id, "VERIFY_EMAIL");
-  await queueEmail(result.organisation.id, input.email, `auth:${result.user.id}:verify`, "Action required: verify your CargoForm registration", `Dear ${input.displayName},\n\nThank you for registering ${input.legalName} with CargoForm. Your application has been saved, but it will not be submitted to the Platform Administrator until you verify this email address:\n${config.APP_ORIGIN}/verify-email?token=${encodeURIComponent(token)}\n\nThis secure link expires in ${config.AUTH_TOKEN_TTL_MINUTES} minutes. If you did not request this registration, no action is required.\n\n${accountSignature(input.legalName)}`);
+  await queueEmail(result.organisation.id, input.email, `auth:${result.user.id}:verify`, "Action required: verify your CargoForm registration", `Dear ${input.displayName},\n\nThank you for registering ${accountName} with CargoForm. Your application has been saved, but it will not be submitted to the Platform Administrator until you verify this email address:\n${config.APP_ORIGIN}/verify-email?token=${encodeURIComponent(token)}\n\nThis secure link expires in ${config.AUTH_TOKEN_TTL_MINUTES} minutes. If you did not request this registration, no action is required.\n\n${accountSignature(accountName)}`);
   res.status(202).json({ accepted: true, status: "EMAIL_VERIFICATION_PENDING" });
 });
 
@@ -104,8 +98,11 @@ authRouter.post("/resend-verification", async (req, res) => {
 });
 
 authRouter.post("/login", async (req, res) => {
-  const input = z.object({ email: emailSchema, password: z.string().max(128), organisationId: z.string().optional(), mfaCode: z.string().regex(/^\d{6}$/).optional() }).parse(req.body);
-  const user = await db.user.findUnique({ where: { email: input.email }, include: { credential: true, memberships: { include: { organisation: true } }, mfaTotp: true } });
+  const input = z.object({ identifier: z.string().trim().min(3).max(254).optional(), email: z.string().trim().max(254).optional(), password: z.string().max(128), organisationId: z.string().optional(), mfaCode: z.string().regex(/^\d{6}$/).optional() }).parse(req.body);
+  const identifier = (input.identifier || input.email || "").trim();
+  const user = identifier.includes("@")
+    ? await db.user.findUnique({ where: { email: identifier.toLowerCase() }, include: { credential: true, memberships: { include: { organisation: true } }, mfaTotp: true } })
+    : await db.user.findUnique({ where: { phone: normalizePhone(identifier) }, include: { credential: true, memberships: { include: { organisation: true } }, mfaTotp: true } });
   if (!user?.credential || user.disabledAt || !await verifyPassword(user.credential.passwordHash, input.password)) return res.status(401).json({ error: "INVALID_CREDENTIALS" });
   if (!user.emailVerifiedAt) return res.status(403).json({ error: "EMAIL_NOT_VERIFIED" });
   const membership = user.memberships.find((m) => m.organisationId === input.organisationId) ?? (user.memberships.length === 1 ? user.memberships[0] : undefined);
@@ -114,9 +111,9 @@ authRouter.post("/login", async (req, res) => {
     const error = membership.organisation.status === "CHANGES_REQUESTED" ? "ACCOUNT_CHANGES_REQUESTED" : membership.organisation.status === "REJECTED" ? "ACCOUNT_REJECTED" : membership.organisation.status === "SUSPENDED" ? "ACCOUNT_SUSPENDED" : "ACCOUNT_PENDING_APPROVAL";
     return res.status(403).json({ error, status: membership.organisation.status });
   }
-  const privileged = membership.role === "PLATFORM_ADMIN" || membership.role === "OWNER";
+  const privileged = membership.role === "PLATFORM_ADMIN";
   if (privileged && !user.mfaTotp?.enabledAt) return res.status(403).json({ error: "MFA_ENROLLMENT_REQUIRED" });
-  if (user.mfaTotp?.enabledAt) {
+  if (privileged && user.mfaTotp?.enabledAt) {
     if (!input.mfaCode) return res.status(401).json({ error: "MFA_REQUIRED" });
     const result = await verifyTotp({ secret: decryptJson<{ secret: string }>(user.mfaTotp.encryptedSecret).secret, token: input.mfaCode, epochTolerance: 30 });
     if (!result.valid) return res.status(401).json({ error: "INVALID_MFA_CODE" });
@@ -149,7 +146,7 @@ authRouter.post("/reset-password", async (req, res) => {
 async function authenticateForMfa(email: string, password: string) {
   const user = await db.user.findUnique({ where: { email }, include: { credential: true, memberships: { include: { organisation: true } } } });
   if (!user?.credential || user.disabledAt || !user.emailVerifiedAt || !await verifyPassword(user.credential.passwordHash, password)) return null;
-  if (!user.memberships.some((m) => m.role === "PLATFORM_ADMIN" || (m.role === "OWNER" && m.organisation.status === "APPROVED"))) return null;
+  if (!user.memberships.some((m) => m.role === "PLATFORM_ADMIN")) return null;
   return user;
 }
 authRouter.post("/mfa/setup", async (req, res) => {
