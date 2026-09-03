@@ -710,9 +710,6 @@ aside .nav { height: 41px; }
 .password-rule { margin-top: -8px; }
 .show-password { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; color: #52686c; font-size: 12px; }
 .show-password input { width: auto !important; margin: 0; }
-.mfa-setup-key { display: grid; gap: 8px; padding: 14px; border: 1px solid #ead9b2; border-radius: 8px; background: #fff8e8; }
-.mfa-setup-key code { overflow-wrap: anywhere; padding: 9px; border-radius: 6px; background: #fff; font-size: 12px; letter-spacing: .08em; }
-.mfa-setup-key small { color: #6f654d; line-height: 1.5; }
 .admin-metrics { display: grid; grid-template-columns: repeat(auto-fit,minmax(145px,1fr)); gap: 12px; margin: 22px 0; }
 .admin-metrics > div { display: grid; gap: 4px; border: 1px solid #d8e2e1; background: #f7f9f9; border-radius: 10px; padding: 18px; }
 .admin-metrics b { font-size: 25px; color: #1b4a47; }

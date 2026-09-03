@@ -131,9 +131,6 @@ const authModeFromPath = (): AuthMode => window.location.pathname === "/verify-e
 const friendlyAuthError = (error: string) => ({
   INVALID_CREDENTIALS: "The email address/mobile number or password does not match an active account.",
   EMAIL_NOT_VERIFIED: "Please verify your email address before signing in.",
-  MFA_ENROLLMENT_REQUIRED: "The Platform Administrator authenticator requires setup. Contact the authorized system owner.",
-  MFA_REQUIRED: "Enter the current six-digit code from your authenticator app.",
-  INVALID_MFA_CODE: "That authenticator code is not valid. Wait for a new code and try again.",
   ACCOUNT_PENDING_APPROVAL: "Your registration is verified and is awaiting Platform Admin approval.",
   ACCOUNT_CHANGES_REQUESTED: "The Platform Admin requested changes to your registration. Please contact the administrator.",
   ACCOUNT_REJECTED: "This registration was not approved. Please contact the Platform Admin.",
@@ -1675,10 +1672,9 @@ function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>(authModeFromPath);
   const registrationMode = authMode === "REGISTER";
-  const [authForm, setAuthForm] = useState({ email: "", password: "", confirmPassword: "", newPassword: "", mfaCode: "", displayName: "", legalName: "", accountType: "ORGANISATION", phone: "", dateOfBirth: "", residentialAddress: "", identityType: "Citizenship / passport", identityNumber: "", registrationNumber: "", panVat: "", registeredAddress: "", contactPerson: "" });
+  const [authForm, setAuthForm] = useState({ email: "", password: "", confirmPassword: "", newPassword: "", displayName: "", legalName: "", accountType: "ORGANISATION", phone: "", dateOfBirth: "", residentialAddress: "", identityType: "Citizenship / passport", identityNumber: "", registrationNumber: "", panVat: "", registeredAddress: "", contactPerson: "" });
   const [showPassword, setShowPassword] = useState(false);
   const [authMessage, setAuthMessage] = useState(() => authModeFromPath() === "LOGIN" ? "Checking your secure session…" : "");
-  const [adminMfaRequired, setAdminMfaRequired] = useState(false);
   const [sessionInfo, setSessionInfo] = useState<AuthSessionInfo | null>(null);
   const [adminApplications, setAdminApplications] = useState<AdminApplication[]>([]);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
@@ -2195,7 +2191,7 @@ function App() {
   const installApp = async () => { if (!installPrompt) return; await installPrompt.prompt(); const result = await installPrompt.userChoice; if (result.outcome === "accepted") setInstallPrompt(null); };
   const openDocument = (kind: DocType) => { setDoc(kind); setActiveSection("Shipment data"); };
   const navigateAuth = (mode: AuthMode) => {
-    setAuthMode(mode); setAdminMfaRequired(false); setAuthMessage("");
+    setAuthMode(mode); setAuthMessage("");
     const path = mode === "RESET" ? "/reset-password" : mode === "VERIFY" ? "/verify-email" : "/";
     if (mode !== "RESET" && mode !== "VERIFY") window.history.replaceState({}, "", path);
   };
@@ -2203,7 +2199,7 @@ function App() {
     const sessionResponse = await fetch(`${apiBase}/auth/me`, { credentials: "include" });
     if (!sessionResponse.ok) throw new Error("REQUEST_FAILED");
     const session = await sessionResponse.json() as AuthSessionInfo;
-    setSessionInfo(session); setLoggedIn(true); setAdminMfaRequired(false); setAuthMessage("");
+    setSessionInfo(session); setLoggedIn(true); setAuthMessage("");
     if (session.role === "PLATFORM_ADMIN") setActiveSection("Admin dashboard");
   };
   const submitAuthentication = async () => {
@@ -2211,11 +2207,10 @@ function App() {
     const route = registrationMode ? "register" : "login";
     const payload = registrationMode
       ? { displayName: authForm.displayName, email: authForm.email, phone: authForm.phone, companyName: authForm.legalName || undefined, password: authForm.password }
-      : { identifier: authForm.email, password: authForm.password, mfaCode: authForm.mfaCode || undefined };
+      : { identifier: authForm.email, password: authForm.password };
     try {
       const response = await fetch(`${apiBase}/auth/${route}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       const result = await response.json();
-      if (!response.ok && !registrationMode && result.error === "MFA_REQUIRED") { setAdminMfaRequired(true); setAuthMessage("Administrator password accepted. Enter the six-digit authenticator code."); return; }
       if (!response.ok) throw new Error(result.error || "REQUEST_FAILED");
       if (registrationMode) { navigateAuth("LOGIN"); setAuthMessage("Registration saved. Verify your email address to submit it for Platform Administrator review."); }
       else await establishAuthenticatedSession();
@@ -2350,8 +2345,7 @@ function App() {
     {authMode === "LOGIN" && <><label>Email ID or mobile number<input value={authForm.email} onChange={(e)=>setAuthForm({...authForm,email:e.target.value})} autoComplete="username"/></label><label>Password<input type={showPassword?"text":"password"} value={authForm.password} onChange={(e)=>setAuthForm({...authForm,password:e.target.value})} autoComplete="current-password"/></label><label className="show-password"><input type="checkbox" checked={showPassword} onChange={(e)=>setShowPassword(e.target.checked)}/> Show password</label></>}
     {authMode === "FORGOT" && <label>Email ID<input type="email" value={authForm.email} onChange={(e)=>setAuthForm({...authForm,email:e.target.value})} autoComplete="email"/></label>}
     {authMode === "RESET" && <><label>New password<input type="password" value={authForm.newPassword} onChange={(e)=>setAuthForm({...authForm,newPassword:e.target.value})} autoComplete="new-password"/></label><label>Confirm new password<input type="password" value={authForm.confirmPassword} onChange={(e)=>setAuthForm({...authForm,confirmPassword:e.target.value})} autoComplete="new-password"/></label></>}
-    {authMode === "LOGIN" && adminMfaRequired && <label>Administrator authenticator code<input autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" value={authForm.mfaCode} onChange={(e)=>setAuthForm({...authForm,mfaCode:e.target.value.replace(/\D/g,"")})}/></label>}
-    {authMode === "LOGIN" && <button className="auth-primary" disabled={adminMfaRequired && authForm.mfaCode.length !== 6} onClick={submitAuthentication}>{adminMfaRequired?"Verify and sign in":"Sign in"}</button>}
+    {authMode === "LOGIN" && <button className="auth-primary" onClick={submitAuthentication}>Sign in</button>}
     {authMode === "REGISTER" && <button className="auth-primary" onClick={submitAuthentication}>Submit secure registration</button>}
     {authMode === "FORGOT" && <button className="auth-primary" onClick={requestPasswordReset}>Send reset link</button>}
     {authMode === "RESET" && <button className="auth-primary" onClick={resetPassword}>Update password</button>}

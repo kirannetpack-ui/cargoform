@@ -1,11 +1,9 @@
 import { Router } from "express";
 import { hash, verify as verifyPassword } from "@node-rs/argon2";
-import { generateSecret, generateURI, verify as verifyTotp } from "otplib";
 import { z } from "zod";
 import { config } from "./config.js";
 import { db } from "./db.js";
 import { clearSessionCookie, createSession, hashOpaqueToken, newOpaqueToken, requireSession } from "./auth.js";
-import { decryptJson, encryptJson } from "./crypto.js";
 import { publishNotification } from "./notification-service.js";
 
 export const authRouter = Router();
@@ -98,11 +96,11 @@ authRouter.post("/resend-verification", async (req, res) => {
 });
 
 authRouter.post("/login", async (req, res) => {
-  const input = z.object({ identifier: z.string().trim().min(3).max(254).optional(), email: z.string().trim().max(254).optional(), password: z.string().max(128), organisationId: z.string().optional(), mfaCode: z.string().regex(/^\d{6}$/).optional() }).parse(req.body);
+  const input = z.object({ identifier: z.string().trim().min(3).max(254).optional(), email: z.string().trim().max(254).optional(), password: z.string().max(128), organisationId: z.string().optional() }).parse(req.body);
   const identifier = (input.identifier || input.email || "").trim();
   const user = identifier.includes("@")
-    ? await db.user.findUnique({ where: { email: identifier.toLowerCase() }, include: { credential: true, memberships: { include: { organisation: true } }, mfaTotp: true } })
-    : await db.user.findUnique({ where: { phone: normalizePhone(identifier) }, include: { credential: true, memberships: { include: { organisation: true } }, mfaTotp: true } });
+    ? await db.user.findUnique({ where: { email: identifier.toLowerCase() }, include: { credential: true, memberships: { include: { organisation: true } } } })
+    : await db.user.findUnique({ where: { phone: normalizePhone(identifier) }, include: { credential: true, memberships: { include: { organisation: true } } } });
   if (!user?.credential || user.disabledAt || !await verifyPassword(user.credential.passwordHash, input.password)) return res.status(401).json({ error: "INVALID_CREDENTIALS" });
   if (!user.emailVerifiedAt) return res.status(403).json({ error: "EMAIL_NOT_VERIFIED" });
   const membership = user.memberships.find((m) => m.organisationId === input.organisationId) ?? (user.memberships.length === 1 ? user.memberships[0] : undefined);
@@ -110,13 +108,6 @@ authRouter.post("/login", async (req, res) => {
   if (membership.role !== "PLATFORM_ADMIN" && membership.organisation.status !== "APPROVED") {
     const error = membership.organisation.status === "CHANGES_REQUESTED" ? "ACCOUNT_CHANGES_REQUESTED" : membership.organisation.status === "REJECTED" ? "ACCOUNT_REJECTED" : membership.organisation.status === "SUSPENDED" ? "ACCOUNT_SUSPENDED" : "ACCOUNT_PENDING_APPROVAL";
     return res.status(403).json({ error, status: membership.organisation.status });
-  }
-  const privileged = membership.role === "PLATFORM_ADMIN";
-  if (privileged && !user.mfaTotp?.enabledAt) return res.status(403).json({ error: "MFA_ENROLLMENT_REQUIRED" });
-  if (privileged && user.mfaTotp?.enabledAt) {
-    if (!input.mfaCode) return res.status(401).json({ error: "MFA_REQUIRED" });
-    const result = await verifyTotp({ secret: decryptJson<{ secret: string }>(user.mfaTotp.encryptedSecret).secret, token: input.mfaCode, epochTolerance: 30 });
-    if (!result.valid) return res.status(401).json({ error: "INVALID_MFA_CODE" });
   }
   const expiresAt = await createSession(req, res, user.id);
   res.json({ user: { id: user.id, email: user.email, displayName: user.displayName }, organisationId: membership.organisationId, role: membership.role, expiresAt });
@@ -143,31 +134,6 @@ authRouter.post("/reset-password", async (req, res) => {
   res.json({ reset: true });
 });
 
-async function authenticateForMfa(email: string, password: string) {
-  const user = await db.user.findUnique({ where: { email }, include: { credential: true, memberships: { include: { organisation: true } } } });
-  if (!user?.credential || user.disabledAt || !user.emailVerifiedAt || !await verifyPassword(user.credential.passwordHash, password)) return null;
-  if (!user.memberships.some((m) => m.role === "PLATFORM_ADMIN")) return null;
-  return user;
-}
-authRouter.post("/mfa/setup", async (req, res) => {
-  const input = z.object({ email: emailSchema, password: z.string().max(128) }).parse(req.body);
-  const user = await authenticateForMfa(input.email, input.password);
-  if (!user) return res.status(401).json({ error: "INVALID_CREDENTIALS" });
-  const secret = generateSecret();
-  await db.mfaTotp.upsert({ where: { userId: user.id }, create: { userId: user.id, encryptedSecret: encryptJson({ secret }) }, update: { encryptedSecret: encryptJson({ secret }), enabledAt: null } });
-  res.json({ secret, uri: generateURI({ issuer: "CargoForm", label: user.email, secret }) });
-});
-authRouter.post("/mfa/confirm", async (req, res) => {
-  const input = z.object({ email: emailSchema, password: z.string().max(128), code: z.string().regex(/^\d{6}$/) }).parse(req.body);
-  const user = await authenticateForMfa(input.email, input.password);
-  if (!user) return res.status(401).json({ error: "INVALID_CREDENTIALS" });
-  const record = await db.mfaTotp.findUnique({ where: { userId: user.id } });
-  if (!record) return res.status(409).json({ error: "MFA_SETUP_REQUIRED" });
-  const result = await verifyTotp({ secret: decryptJson<{ secret: string }>(record.encryptedSecret).secret, token: input.code, epochTolerance: 30 });
-  if (!result.valid) return res.status(400).json({ error: "INVALID_MFA_CODE" });
-  await db.mfaTotp.update({ where: { userId: record.userId }, data: { enabledAt: new Date() } });
-  res.json({ enabled: true });
-});
 authRouter.get("/sessions", requireSession, async (_req, res) => res.json(await db.authSession.findMany({ where: { userId: res.locals.session.userId, revokedAt: null, expiresAt: { gt: new Date() } }, select: { id: true, createdAt: true, lastSeenAt: true, expiresAt: true }, orderBy: { lastSeenAt: "desc" } })));
 authRouter.delete("/sessions/:id", requireSession, async (req, res) => { const id = z.string().parse(req.params.id); await db.authSession.updateMany({ where: { id, userId: res.locals.session.userId }, data: { revokedAt: new Date() } }); res.status(204).end(); });
 authRouter.post("/logout", requireSession, async (_req, res) => { await db.authSession.update({ where: { id: res.locals.session.id }, data: { revokedAt: new Date() } }); clearSessionCookie(res); res.status(204).end(); });

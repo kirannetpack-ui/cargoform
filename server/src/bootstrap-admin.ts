@@ -22,5 +22,5 @@ await db.$transaction(async (tx) => {
   const organisation = await tx.organisation.create({ data: { legalName: "CargoForm Platform Administration", status: "APPROVED" } });
   await tx.user.create({ data: { email, displayName: "CargoForm Administrator", emailVerifiedAt: new Date(), credential: { create: { passwordHash } }, memberships: { create: { organisationId: organisation.id, role: "PLATFORM_ADMIN" } } } });
 });
-console.log("One-time Platform Admin bootstrap completed. MFA enrollment is required before login.");
+console.log("One-time Platform Admin bootstrap completed. Sign in with the configured email address and password.");
 await db.$disconnect();
