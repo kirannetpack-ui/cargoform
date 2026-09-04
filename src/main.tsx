@@ -440,6 +440,48 @@ Object.assign(airCarriers, {
   },
 });
 
+const normalizeMawbNumber = (value: string) => {
+  const digits = value.replace(/\D/g, "").slice(0, 11);
+  return digits.length > 3 ? `${digits.slice(0, 3)}-${digits.slice(3)}` : digits;
+};
+
+const inspectMawbNumber = (value: string) => {
+  const digits = value.replace(/\D/g, "");
+  const formatValid = digits.length === 11;
+  const serial = digits.slice(3, 10);
+  const suppliedCheckDigit = digits.slice(10, 11);
+  const expectedCheckDigit = serial.length === 7 ? String(Number(serial) % 7) : "";
+  const checkDigitValid = formatValid && suppliedCheckDigit === expectedCheckDigit;
+  return {
+    digits,
+    prefix: digits.slice(0, 3),
+    serialWithCheckDigit: digits.slice(3, 11),
+    formatted: formatValid ? `${digits.slice(0, 3)}-${digits.slice(3, 11)}` : normalizeMawbNumber(value),
+    formatValid,
+    checkDigitValid,
+    expectedCheckDigit,
+  };
+};
+
+const getCarrierTrackingUrl = (mawbNumber: string, fallback: string) => {
+  const awb = inspectMawbNumber(mawbNumber);
+  if (!awb.formatValid || !awb.checkDigitValid) return fallback;
+
+  // Qatar Airways Cargo publishes a tracker URL that accepts the prefix and
+  // eight-digit serial/check number separately. Other carriers retain their
+  // official tracking-page fallback until a supported deep-link is verified.
+  if (awb.prefix === "157") {
+    const query = new URLSearchParams({
+      documentNumber: awb.serialWithCheckDigit,
+      documentPrefix: awb.prefix,
+      documentType: "MAWB",
+    });
+    return `https://www.qrcargo.com/s/track-your-shipment?${query.toString()}`;
+  }
+
+  return fallback;
+};
+
 const oceanCarriers: Record<
   string,
   { name: string; code: string; tracking: string; ops: string }
@@ -1719,6 +1761,11 @@ function App() {
     (profile.accountType === "ORGANISATION" ? profile.legalName : profile.fullName) ||
     organisation.name || data.exporterName;
   const activeDocumentNo = doc === "HAWB" ? data.hawbNumber : doc === "HBL" ? data.hblNumber : data.documentNo;
+  const mawbInspection = inspectMawbNumber(data.documentNo);
+  const carrierTrackingUrl =
+    doc === "MAWB"
+      ? getCarrierTrackingUrl(data.documentNo, data.trackingUrl)
+      : data.trackingUrl;
   const phyto = phytoAssessment(goodsLines);
   const totals = useMemo(
     () => shipmentMetrics(boxes, goodsLines, airDivisor),
@@ -1828,13 +1875,18 @@ function App() {
       e.push("Enter at least a 4-digit HS code.");
     if ((doc === "MAWB" || doc === "HAWB") && !data.departure)
       e.push("Departure airport is required for air waybills.");
+    if (doc === "MAWB" && data.documentNo && !mawbInspection.formatValid)
+      e.push(
+        "Enter the complete IATA MAWB number as 000-00000000: 3-digit airline prefix, 7-digit serial and check digit.",
+      );
     if (
       doc === "MAWB" &&
       data.documentNo &&
-      !/^\d{3}[ -]?\d{8}$/.test(data.documentNo)
+      mawbInspection.formatValid &&
+      !mawbInspection.checkDigitValid
     )
       e.push(
-        "MAWB number should contain the 3-digit airline prefix and 8-digit serial/check number.",
+        `The MAWB check digit is invalid. For serial ${mawbInspection.digits.slice(3, 10)}, IATA Modulus 7 requires check digit ${mawbInspection.expectedCheckDigit}.`,
       );
     if (doc === "HAWB" && !data.hawbNumber.trim())
       e.push("Enter a House Air Waybill number.");
@@ -1876,12 +1928,13 @@ function App() {
     if (boxes.length > 0 && enteredGross > 0 && Math.abs(enteredGross - totals.actualKg) > 0.01)
       e.push(`Goods-line gross weight (${enteredGross.toFixed(2)} kg) does not match packing actual weight (${totals.actualKg.toFixed(2)} kg). Packing weight controls MAWB/HAWB/B/L/HBL/email.`);
     return e;
-  }, [data, doc, rule, boxes, extraGoods, airDivisor, totals.actualKg, houseIssuerName, houseBlIssuerName]);
+  }, [data, doc, rule, boxes, extraGoods, airDivisor, totals.actualKg, houseIssuerName, houseBlIssuerName, mawbInspection.formatValid, mawbInspection.checkDigitValid, mawbInspection.expectedCheckDigit, mawbInspection.digits]);
   const set = (k: keyof FormData, v: string) =>
     setData((d) => {
-      let next = { ...d, [k]: v };
+      const fieldValue = k === "documentNo" && doc === "MAWB" ? normalizeMawbNumber(v) : v;
+      let next = { ...d, [k]: fieldValue };
       if (k === "documentNo") {
-        const clean = v.toUpperCase().replace(/[^A-Z0-9]/g, "");
+        const clean = fieldValue.toUpperCase().replace(/[^A-Z0-9]/g, "");
         const match =
           doc === "MAWB"
             ? airCarriers[clean.slice(0, 3)]
@@ -2522,11 +2575,18 @@ function App() {
             <button className="danger" onClick={deleteDraft} disabled={locked}>
               Delete
             </button>
-            {data.trackingUrl && (
-              <a href={data.trackingUrl} target="_blank">
-                Track with carrier ↗
+            {data.trackingUrl && doc === "MAWB" && !mawbInspection.checkDigitValid ? (
+              <button
+                disabled
+                title="Enter a complete MAWB with a valid IATA Modulus 7 check digit before tracking."
+              >
+                Track with carrier
+              </button>
+            ) : data.trackingUrl ? (
+              <a href={carrierTrackingUrl} target="_blank" rel="noreferrer">
+                {doc === "MAWB" ? `Track ${mawbInspection.formatted}` : "Track with carrier"} ↗
               </a>
-            )}
+            ) : null}
             {status === "CONFIRMED" && data.operationsUrl && (
               <a href={data.operationsUrl} target="_blank">
                 Cargo operations ↗
@@ -2827,7 +2887,9 @@ function App() {
                 <div className="grid">
                   {fs.map((f) => (
                     <label key={f.key}>
-                      {f.label}
+                      {f.key === "documentNo" && doc === "MAWB"
+                        ? "MAWB number (000-00000000)"
+                        : f.label}
                       <input
                         disabled={locked}
                         type={
@@ -2839,11 +2901,26 @@ function App() {
                         }
                         value={data[f.key] as string}
                         onChange={(e) => set(f.key, e.target.value)}
+                        placeholder={f.key === "documentNo" && doc === "MAWB" ? "157-12345675" : undefined}
+                        inputMode={f.key === "documentNo" && doc === "MAWB" ? "numeric" : undefined}
+                        maxLength={f.key === "documentNo" && doc === "MAWB" ? 12 : undefined}
                       />
                       {f.key === "documentNo" && (
                         <small className="field-help">
-                          MAWB: enter 3-digit prefix + 8 digits. B/L: enter the
-                          full carrier document number. For HBL, this field is the underlying master B/L number.
+                          {doc === "MAWB" ? (
+                            <>
+                              IATA format: 3-digit airline prefix + 7-digit serial + Modulus 7 check digit.
+                              {mawbInspection.formatValid && (
+                                <span className={mawbInspection.checkDigitValid ? "valid" : "error"}>
+                                  {mawbInspection.checkDigitValid
+                                    ? ` Check digit verified; tracking uses ${mawbInspection.formatted}.`
+                                    : ` Check digit should be ${mawbInspection.expectedCheckDigit}.`}
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <>B/L: enter the full carrier document number. For HBL, this field is the underlying master B/L number.</>
+                          )}
                         </small>
                       )}
                     </label>

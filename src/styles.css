@@ -1206,6 +1206,14 @@ footer {
   text-transform: none;
   letter-spacing: 0;
 }
+.field-help .valid {
+  color: #26705f;
+  font-weight: 700;
+}
+.field-help .error {
+  color: #a33f2c;
+  font-weight: 700;
+}
 .amend-title {
   display: flex;
   align-items: center;
