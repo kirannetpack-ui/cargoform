@@ -92,8 +92,9 @@ type Contact = {
   status: "ACTIVE" | "INVITED" | "PENDING_REVIEW";
 };
 type EmailDraft = {
-  to: string[];
-  cc: string[];
+  to: string;
+  cc: string;
+  bcc: string;
   subject: string;
   body: string;
   documents: string[];
@@ -1650,6 +1651,7 @@ function App() {
     "Packing List",
   ]);
   const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
+  const [emailDraftMessage, setEmailDraftMessage] = useState("");
   const [boxes, setBoxes] = useState<PackingBox[]>(() => {
     try {
       return JSON.parse(localStorage.getItem("cargoform.v5.boxes") || "[]");
@@ -1938,21 +1940,56 @@ function App() {
       .map((c) => c.email);
     const subject = `${activeDocumentNo || "PENDING"} | ${data.destination} | ${totals.actualKg.toFixed(2)} kg | ${totals.pieces} boxes | ${data.consigneeName}`;
     setEmailDraft({
-      to: recipients,
-      cc: contacts.filter((c) => c.role === "MAIN_USER").map((c) => c.email),
+      to: recipients.join("; "),
+      cc: contacts.filter((c) => c.role === "MAIN_USER").map((c) => c.email).join("; "),
+      bcc: "",
       subject,
       documents: selectedDocs,
       body: `Dear Cargo Operations,\n\nPlease find the shipment details for ${activeDocumentNo || "the pending transport document"}.\nCarrier: ${data.carrier}\nRouting: ${data.departure} to ${data.destination}\nConsignee: ${data.consigneeName}\nPieces: ${totals.pieces} boxes\nActual weight: ${totals.actualKg.toFixed(2)} kg\nVolumetric weight: ${totals.volumetricKg.toFixed(2)} kg\nChargeable weight: ${totals.chargeableKg.toFixed(2)} kg\nCBM: ${totals.cbm.toFixed(4)}\nGoods lines: ${goodsLines.length}\n\nSelected documents: ${selectedDocs.join(", ")}.\n\nPlease review and confirm.`,
     });
+    setEmailDraftMessage("");
+  };
+  const parseEmailAddresses = (value: string) =>
+    Array.from(
+      new Set(
+        value
+          .split(/[;,\n]/)
+          .map((email) => email.trim())
+          .filter(Boolean),
+      ),
+    );
+  const updateEmailRecipients = (field: "to" | "cc" | "bcc", value: string) => {
+    setEmailDraft((draft) =>
+      draft ? { ...draft, [field]: value } : draft,
+    );
+    setEmailDraftMessage("");
   };
   const sendEmail = () => {
-    if (!emailDraft || emailDraft.to.length === 0) return;
+    if (!emailDraft) return;
+    const to = parseEmailAddresses(emailDraft.to);
+    const cc = parseEmailAddresses(emailDraft.cc);
+    const bcc = parseEmailAddresses(emailDraft.bcc);
+    const allRecipients = [...to, ...cc, ...bcc];
+    const invalidRecipients = allRecipients.filter(
+      (email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),
+    );
+    if (to.length === 0) {
+      setEmailDraftMessage("Enter at least one recipient in the To field.");
+      return;
+    }
+    if (invalidRecipients.length > 0) {
+      setEmailDraftMessage(
+        `Check the following email address${invalidRecipients.length === 1 ? "" : "es"}: ${invalidRecipients.join(", ")}`,
+      );
+      return;
+    }
     const query = new URLSearchParams({
-      cc: emailDraft.cc.join(","),
+      cc: cc.join(","),
+      bcc: bcc.join(","),
       subject: emailDraft.subject,
       body: `${emailDraft.body}\n\nAttachments to add: ${emailDraft.documents.join(", ")}`,
     });
-    window.location.href = `mailto:${emailDraft.to.join(",")}?${query.toString()}`;
+    window.location.href = `mailto:${to.join(",")}?${query.toString()}`;
   };
   const setBoxCount = (count: number) => {
     const n = Math.max(0, Math.min(100, Math.floor(count || 0)));
@@ -2711,17 +2748,52 @@ function App() {
           </div>
           {emailDraft && (
             <div className="email-preview">
-              <small>
-                TO: {emailDraft.to.join("; ") || "Add carrier/user email"}
-              </small>
-              <small>CC: {emailDraft.cc.join("; ") || "None"}</small>
+              <div className="email-recipient-grid">
+                <label>
+                  To <span aria-hidden="true">*</span>
+                  <input
+                    type="text"
+                    value={emailDraft.to}
+                    placeholder="recipient@example.com; operations@example.com"
+                    onChange={(event) => updateEmailRecipients("to", event.target.value)}
+                    aria-required="true"
+                  />
+                </label>
+                <label>
+                  CC
+                  <input
+                    type="text"
+                    value={emailDraft.cc}
+                    placeholder="Optional copy recipients"
+                    onChange={(event) => updateEmailRecipients("cc", event.target.value)}
+                  />
+                </label>
+                <label>
+                  BCC
+                  <input
+                    type="text"
+                    value={emailDraft.bcc}
+                    placeholder="Optional private-copy recipients"
+                    onChange={(event) => updateEmailRecipients("bcc", event.target.value)}
+                  />
+                </label>
+                <small>
+                  Default carrier and Main User addresses are filled automatically. You may add,
+                  replace, or remove addresses; separate multiple addresses with commas or semicolons.
+                </small>
+              </div>
               <b>SUBJECT: {emailDraft.subject}</b>
               <pre>{emailDraft.body}</pre>
               <p>
                 Attachments selected:{" "}
                 {emailDraft.documents.join(", ") || "None"}
               </p>
-              <button className="send-email" disabled={emailDraft.to.length === 0} onClick={sendEmail}>
+              {emailDraftMessage && (
+                <div className="email-recipient-error" role="alert">
+                  {emailDraftMessage}
+                </div>
+              )}
+              <button className="send-email" onClick={sendEmail}>
                 Send email
               </button>
               <div className="clause-notice">
