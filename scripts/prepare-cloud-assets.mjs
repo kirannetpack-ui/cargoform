@@ -14,7 +14,10 @@ const generatedTarget = join(projectRoot, "cloud", "generated-assets.json");
 
 rmSync(publicTarget, { recursive: true, force: true });
 mkdirSync(publicTarget, { recursive: true });
-cpSync(dist, publicTarget, { recursive: true });
+cpSync(dist, publicTarget, {
+  recursive: true,
+  filter: (source) => source !== join(dist, "cloud-app"),
+});
 mkdirSync(dirname(generatedTarget), { recursive: true });
 writeFileSync(
   generatedTarget,

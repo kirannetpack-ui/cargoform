@@ -2,7 +2,7 @@
 
 ## Current status
 
-The frontend/PWA and Android shell build successfully. The production API and Prisma schema compile successfully. The current dependency audit reports a Prisma CLI/config advisory that must be upgraded or formally risk-accepted before staging approval.
+The frontend/PWA and Android shell build successfully. The production API and Prisma schema compile successfully. The frontend now requires API authentication; deploy the API and apply migrations before exposing the Vercel URL to users. The current dependency audit reports a Prisma CLI/config advisory that must be upgraded or formally risk-accepted before staging approval.
 
 This is a production foundation—not a live deployment. A real domain, PostgreSQL service, secret manager, Google OAuth credentials, Admin bootstrap, storage, monitoring and backups are still required.
 
@@ -64,9 +64,9 @@ Populate the `.env` file before starting. The server intentionally refuses to st
 1. Provision managed PostgreSQL with encryption, point-in-time recovery and automated backups.
 2. Provision encrypted object storage for registration and shipment documents.
 3. Deploy API and email worker on Node.js 20+ behind HTTPS.
-4. Run `prisma migrate deploy` as a controlled release job.
+4. Run `prisma migrate deploy` as a controlled release job, including the saved-party migration.
 5. Bootstrap `app.netpack@gmail.com` as the one initial Platform Admin through a one-time secured command; then disable bootstrap.
-6. Deploy the PWA with `VITE_API_BASE_URL` pointing to the API.
+6. Deploy the PWA with `VITE_API_BASE_URL` pointing to the API; do not enable anonymous workspace access.
 7. Configure allowed origins, secure cookies, CSP, rate limits and reverse-proxy request limits.
 8. Complete production Gmail OAuth from the Admin Settings screen.
 9. Run registration, notification, chat, document, payment and tenant-isolation acceptance tests.

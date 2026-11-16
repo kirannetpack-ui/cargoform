@@ -19,8 +19,19 @@ import { httpDuration, httpRequests, logger, metrics } from "./observability.js"
 const app = express();
 app.disable("x-powered-by");
 app.use(helmet());
-app.use(pinoHttp({ logger }));
+app.use(pinoHttp({
+  logger,
+  redact: ["req.headers.authorization", "req.headers.cookie", "res.headers.set-cookie"],
+  serializers: {
+    req: (req) => ({ method: req.method, url: req.url?.split("?")[0] || "/" }),
+    res: (res) => ({ statusCode: res.statusCode }),
+  },
+}));
 app.use(cors({ origin: config.APP_ORIGIN, credentials: true }));
+app.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 app.use("/api/auth", authRouter);
@@ -90,7 +101,7 @@ app.get("/api/integrations/gmail/callback", async (req, res) => {
 
 app.post("/api/main-user-applications", requireSession, async (req, res) => {
   const session = res.locals.session;
-  const input = z.object({ accountType: z.enum(["INDIVIDUAL", "ORGANISATION"]), applicantEmail: z.string().email(), payload: z.record(z.unknown()) }).parse(req.body);
+  const input = z.object({ accountType: z.enum(["INDIVIDUAL", "ORGANISATION"]), applicantEmail: z.string().email(), payload: z.record(z.string(), z.unknown()) }).parse(req.body);
   const result = await db.$transaction(async (tx) => {
     const application = await tx.mainUserApplication.create({ data: { organisationId: session.organisationId, accountType: input.accountType, applicantEmail: input.applicantEmail, payload: input.payload as Prisma.InputJsonValue, status: "SUBMITTED", submittedAt: new Date() } });
     const adminUsers = await tx.user.findMany({ where: { memberships: { some: { role: "PLATFORM_ADMIN" } } }, select: { id: true, email: true, displayName: true } });
@@ -108,9 +119,18 @@ app.post("/api/main-user-applications", requireSession, async (req, res) => {
   res.status(201).json(result);
 });
 
-app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error(error);
-  res.status(400).json({ error: "REQUEST_FAILED" });
+app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const parserStatus = typeof error === "object" && error !== null && "status" in error && typeof error.status === "number"
+    ? error.status
+    : undefined;
+  const statusCode = error instanceof z.ZodError ? 400 : parserStatus && parserStatus >= 400 && parserStatus < 500 ? parserStatus : 500;
+  if (statusCode < 500) {
+    logger.warn({ method: req.method, route: req.path, errorCode: "VALIDATION_FAILED" }, "Request validation failed");
+    res.status(statusCode).json({ error: statusCode === 413 ? "REQUEST_TOO_LARGE" : "VALIDATION_FAILED" });
+    return;
+  }
+  logger.error({ method: req.method, route: req.path, errorType: error instanceof Error ? error.name : "UnknownError" }, "Unhandled API request error");
+  res.status(statusCode).json({ error: "INTERNAL_SERVER_ERROR" });
 });
 
 const server = app.listen(config.PORT, () => console.log(`CargoForm API listening on ${config.PORT}`));

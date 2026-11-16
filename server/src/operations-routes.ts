@@ -7,6 +7,15 @@ import { db } from "./db.js";
 export const operationsRouter = Router();
 operationsRouter.use(requireSession);
 const writeRoles = requireRoles("OWNER", "OPERATIONS");
+const partyReadRoles = requireRoles("OWNER", "OPERATIONS", "REVIEWER", "FINANCE", "READ_ONLY");
+const savedPartyInput = z.object({
+  kind: z.enum(["EXPORTER", "CONSIGNEE"]),
+  name: z.string().trim().min(1).max(160),
+  address: z.string().trim().max(1000).default(""),
+  email: z.string().trim().max(254).email().or(z.literal("")).default(""),
+  phone: z.string().trim().max(40).default(""),
+  taxId: z.string().trim().max(80).default(""),
+});
 
 operationsRouter.get("/clients", async (_req, res) => res.json(await db.clientAccount.findMany({ where: { organisationId: res.locals.session.organisationId }, orderBy: { name: "asc" } })));
 operationsRouter.post("/clients", writeRoles, async (req, res) => {
@@ -23,6 +32,49 @@ operationsRouter.patch("/clients/:id", writeRoles, async (req, res) => {
   res.json(await db.clientAccount.findUnique({ where: { id } }));
 });
 
+operationsRouter.get("/parties", partyReadRoles, async (_req, res) => {
+  const parties = await db.savedParty.findMany({
+    where: { organisationId: res.locals.session.organisationId },
+    select: { id: true, kind: true, name: true, address: true, email: true, phone: true, taxId: true },
+    orderBy: [{ kind: "asc" }, { name: "asc" }],
+  });
+  res.json(parties);
+});
+
+operationsRouter.post("/parties", writeRoles, async (req, res) => {
+  const input = savedPartyInput.parse(req.body);
+  const organisationId = res.locals.session.organisationId;
+  const nameKey = input.name.normalize("NFKC").replace(/\s+/g, " ").toLowerCase();
+  const party = await db.$transaction(async (tx) => {
+    const savedParty = await tx.savedParty.upsert({
+      where: { organisationId_kind_nameKey: { organisationId, kind: input.kind, nameKey } },
+      create: { organisationId, ...input, nameKey },
+      update: { name: input.name, address: input.address, email: input.email, phone: input.phone, taxId: input.taxId },
+      select: { id: true, kind: true, name: true, address: true, email: true, phone: true, taxId: true },
+    });
+    await tx.auditEvent.create({
+      data: { organisationId, actorUserId: res.locals.session.userId, action: "SAVED_PARTY_UPDATED", entityType: "SavedParty", entityId: savedParty.id, metadata: { kind: savedParty.kind } },
+    });
+    return savedParty;
+  });
+  res.status(200).json(party);
+});
+
+operationsRouter.delete("/parties/:id", writeRoles, async (req, res) => {
+  const id = z.string().trim().min(1).max(64).parse(req.params.id);
+  const organisationId = res.locals.session.organisationId;
+  const deleted = await db.$transaction(async (tx) => {
+    const result = await tx.savedParty.deleteMany({ where: { id, organisationId } });
+    if (!result.count) return false;
+    await tx.auditEvent.create({
+      data: { organisationId, actorUserId: res.locals.session.userId, action: "SAVED_PARTY_DELETED", entityType: "SavedParty", entityId: id },
+    });
+    return true;
+  });
+  if (!deleted) return res.status(404).json({ error: "SAVED_PARTY_NOT_FOUND" });
+  res.status(204).end();
+});
+
 operationsRouter.get("/staff", requireRoles("OWNER", "REVIEWER", "READ_ONLY"), async (_req, res) => res.json(await db.membership.findMany({ where: { organisationId: res.locals.session.organisationId, role: { notIn: ["CLIENT", "PLATFORM_ADMIN"] } }, select: { id: true, role: true, user: { select: { id: true, email: true, displayName: true, disabledAt: true } } } })));
 operationsRouter.patch("/staff/:membershipId", requireRoles("OWNER"), async (req, res) => {
   const membershipId = z.string().parse(req.params.membershipId);
@@ -34,8 +86,8 @@ operationsRouter.patch("/staff/:membershipId", requireRoles("OWNER"), async (req
 });
 
 const goodsSchema = z.array(z.object({ lineNumber: z.number().int().positive(), description: z.string().trim().min(2), hsCode: z.string().trim().optional(), botanicalName: z.string().trim().optional(), quantity: z.number().nonnegative().optional(), unit: z.string().trim().optional(), grossWeightKg: z.number().nonnegative().optional(), netWeightKg: z.number().nonnegative().optional() })).min(1);
-const boxSchema = z.array(z.object({ boxNumber: z.number().int().positive(), lengthCm: z.number().positive(), widthCm: z.number().positive(), heightCm: z.number().positive(), actualWeightKg: z.number().nonnegative(), allocations: z.record(z.number().nonnegative()) }));
-const shipmentInput = z.object({ invoiceNumber: z.string().trim().min(1).max(80), documentNumber: z.string().trim().max(80).optional(), clientAccountId: z.string().optional(), shipmentData: z.record(z.unknown()), goods: goodsSchema, boxes: boxSchema });
+const boxSchema = z.array(z.object({ boxNumber: z.number().int().positive(), lengthCm: z.number().positive(), widthCm: z.number().positive(), heightCm: z.number().positive(), actualWeightKg: z.number().nonnegative(), allocations: z.record(z.string(), z.number().nonnegative()) }));
+const shipmentInput = z.object({ invoiceNumber: z.string().trim().min(1).max(80), documentNumber: z.string().trim().max(80).optional(), clientAccountId: z.string().optional(), shipmentData: z.record(z.string(), z.unknown()), goods: goodsSchema, boxes: boxSchema });
 
 function validatePacking(goods: z.infer<typeof goodsSchema>, boxes: z.infer<typeof boxSchema>) {
   const goodsByLine = new Map(goods.map((item) => [String(item.lineNumber), item]));

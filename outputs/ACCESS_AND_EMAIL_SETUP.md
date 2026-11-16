@@ -2,12 +2,12 @@
 
 ## Current access status
 
-The MVP does not have a real Platform Admin credential or password. Its sign-in screen is a local workflow demonstration and must not be treated as production authentication.
+The web application requires a server-authenticated session; there is no local or demo sign-in path. The current Vercel project hosts the frontend only. Do not use it for authenticated operations until the API is deployed and `VITE_API_BASE_URL` points to that API.
 
 Proposed first production Admin identity:
 
 - Role: Platform Admin / Owner
-- Login email: `app.netpack@gmail.com`
+- Login email: configured through `PLATFORM_ADMIN_EMAIL`
 - Password: not defined in source code and must never be committed to the project
 - Required activation: verified Google/email identity, server-created Admin membership and MFA enrollment
 
@@ -29,8 +29,8 @@ Important paths:
 ## Email configuration
 
 - Provider: Gmail OAuth
-- System sender: `app.netpack@gmail.com`
-- Initial Platform Admin recipient: `app.netpack@gmail.com`
+- System sender: configured through `GMAIL_EXPECTED_SENDER`
+- Initial Platform Admin recipient: configured by the account owner
 - Gmail password storage: prohibited
 - Current connector status: connection required
 
@@ -45,4 +45,4 @@ After Gmail OAuth is connected to the exact mailbox, the backend/worker must:
 5. retry temporary failures and mark permanent failures;
 6. retain an audit event without storing the Gmail password or OAuth token in the browser.
 
-The first safe live test should send a registration notification from and to `app.netpack@gmail.com`, using non-sensitive sample applicant data. A user must review/confirm immediately before the send action.
+The first safe live test should use non-sensitive test applicant data. A user must review/confirm immediately before the send action.

@@ -43,9 +43,13 @@ type Goods = {
 type FormData = {
   exporterName: string;
   exporterAddress: string;
+  exporterEmail: string;
+  exporterPhone: string;
   exporterTaxId: string;
   consigneeName: string;
   consigneeAddress: string;
+  consigneeEmail: string;
+  consigneePhone: string;
   notifyParty: string;
   invoiceNo: string;
   invoiceDate: string;
@@ -91,6 +95,16 @@ type Contact = {
   role: "MAIN_USER" | "CHILD_ACCOUNT" | "CARRIER";
   status: "ACTIVE" | "INVITED" | "PENDING_REVIEW";
 };
+type SavedPartyKind = "EXPORTER" | "CONSIGNEE";
+type SavedParty = {
+  id: string;
+  kind: SavedPartyKind;
+  name: string;
+  address: string;
+  email: string;
+  phone: string;
+  taxId: string;
+};
 type EmailDraft = {
   to: string;
   cc: string;
@@ -111,6 +125,17 @@ type MainProfile = {
 type ChatMessage = { id: string; thread: string; sender: "ADMIN" | "MAIN_USER" | "CLIENT"; senderName: string; body: string; createdAt: string };
 type AppNotification = { id: string; category: string; title: string; detail: string; createdAt: string; read: boolean };
 type NotificationPreference = { event: string; email: boolean; inApp: boolean; recipient: string };
+const defaultNotificationPreferences: NotificationPreference[] = [
+  { event: "Registration and Admin decision", email: true, inApp: true, recipient: "Main User" },
+  { event: "Staff or Client invitation", email: true, inApp: true, recipient: "Invitee + Main User" },
+  { event: "Client shipment submission", email: true, inApp: true, recipient: "Owning Main User only" },
+  { event: "Shipment confirmation or departure", email: true, inApp: true, recipient: "Main User + selected Client" },
+  { event: "Carrier submission or response", email: true, inApp: true, recipient: "Main User operations" },
+  { event: "Amendment status", email: true, inApp: true, recipient: "Requester + Main User" },
+  { event: "Document generated or approved", email: false, inApp: true, recipient: "Selected shipment participants" },
+  { event: "Invoice, payment or subscription", email: true, inApp: true, recipient: "Billing contacts" },
+  { event: "New chat message", email: true, inApp: true, recipient: "Thread participants only" },
+];
 type OutboundEmail = { id: string; event: string; from: string; to: string; subject: string; body: string; createdAt: string; status: "QUEUED" | "DRAFTED" | "SENT" | "FAILED" };
 type AuthMode = "LOGIN" | "REGISTER" | "FORGOT" | "RESET" | "VERIFY";
 type AuthSessionInfo = { user: { id: string; email: string; displayName?: string }; role: string; organisation: { id: string; legalName: string; status: string }; application?: { id: string; status: string; reviewedAt?: string } | null };
@@ -119,7 +144,6 @@ type AdminEmailRecord = { id: string; eventKey: string; status: string; attempts
 type AdminEmailStatus = { connected: boolean; sender: string; connectedAt?: string | null; tokenExpiresAt?: string | null; queued: number; failed: number };
 type AdminUser = { id: string; email: string; phone: string | null; displayName: string; emailVerified: boolean; disabled: boolean; createdAt: string; role: string; organisationId: string | null; companyName: string; organisationStatus: string; applicationId: string | null; applicationStatus: string | null };
 type AdminUserCounts = { total: number; active: number; disabled: number; pending: number };
-const DIRECT_WEB_ACCESS = true;
 type PackingBox = {
   id: string;
   lengthCm: number;
@@ -213,48 +237,91 @@ const phytoAssessment = (lines: Goods[]) => {
 };
 
 const initial: FormData = {
-  exporterName: "Himalayan Craft Exports Pvt. Ltd.",
-  exporterAddress: "Lalitpur-3, Bagmati, Nepal",
-  exporterTaxId: "PAN 609000000",
-  consigneeName: "Evergreen Imports LLC",
-  consigneeAddress: "350 Market Street, San Francisco, CA 94105, USA",
-  notifyParty: "Same as consignee",
-  invoiceNo: "HCE-2026-0084",
-  invoiceDate: "2026-08-17",
+  exporterName: "",
+  exporterAddress: "",
+  exporterEmail: "",
+  exporterPhone: "",
+  exporterTaxId: "",
+  consigneeName: "",
+  consigneeAddress: "",
+  consigneeEmail: "",
+  consigneePhone: "",
+  notifyParty: "",
+  invoiceNo: "",
+  invoiceDate: "",
   currency: "USD",
-  invoiceValue: "12,450.00",
-  incoterm: "FOB Kolkata",
-  departure: "Kathmandu, Nepal",
-  destination: "San Francisco, USA",
-  carrier: "To be assigned",
+  invoiceValue: "",
+  incoterm: "",
+  departure: "",
+  destination: "",
+  carrier: "",
   carrierCode: "",
   documentNo: "",
-  hawbNumber: "HCE-2026-0001",
+  hawbNumber: "",
   hawbNumberFormat: "HAWB-{YYYY}-{####}",
   hawbIssuerName: "",
-  hblNumber: "HBL-2026-0001",
+  hblNumber: "",
   hblNumberFormat: "HBL-{YYYY}-{####}",
   hblIssuerName: "",
-  hblReleaseType: "ORIGINAL — NEGOTIABLE",
-  hblOriginals: "THREE (3)",
+  hblReleaseType: "",
+  hblOriginals: "",
   trackingUrl: "",
   operationsUrl: "",
-  flightVoyage: "To be assigned",
-  estimatedDeparture: "2026-08-25T10:00",
-  loadingPort: "Kolkata, India",
-  dischargePort: "Oakland, USA",
+  flightVoyage: "",
+  estimatedDeparture: "",
+  loadingPort: "",
+  dischargePort: "",
   country: "US",
   goods: {
-    description: "Hand-knotted wool carpets",
+    description: "",
     botanicalName: "",
-    hsCode: "5701.10",
-    packages: "24 rolls",
-    grossWeight: "860 kg",
-    netWeight: "810 kg",
-    quantity: "240 m²",
-    originCriterion: "Wholly obtained / sufficiently processed in Nepal",
+    hsCode: "",
+    packages: "",
+    grossWeight: "",
+    netWeight: "",
+    quantity: "",
+    originCriterion: "",
   },
 };
+
+const emptyProfile: MainProfile = {
+  accountType: "ORGANISATION",
+  status: "DRAFT",
+  fullName: "",
+  dateOfBirth: "",
+  email: "",
+  phone: "",
+  address: "",
+  identityType: "Citizenship / passport",
+  identityNumber: "",
+  legalName: "",
+  registrationNumber: "",
+  panVat: "",
+  incorporationDate: "",
+  registeredAddress: "",
+  contactPerson: "",
+};
+
+const workspaceStorageKey = (organisationId: string, key: string) =>
+  `cargoform.organisation.${encodeURIComponent(organisationId)}.${key}`;
+
+function readWorkspaceStorage<T>(organisationId: string, key: string, fallback: T): T {
+  try {
+    const stored = localStorage.getItem(workspaceStorageKey(organisationId, key));
+    return stored === null ? fallback : JSON.parse(stored) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeWorkspaceStorage(organisationId: string, key: string, value: unknown) {
+  try {
+    localStorage.setItem(workspaceStorageKey(organisationId, key), JSON.stringify(value));
+  } catch {
+    return false;
+  }
+  return true;
+}
 
 const airCarriers: Record<
   string,
@@ -694,9 +761,13 @@ const fields: Record<string, { label: string; key: keyof FormData }[]> = {
   Parties: [
     { label: "Exporter / shipper", key: "exporterName" },
     { label: "Exporter address", key: "exporterAddress" },
+    { label: "Exporter email", key: "exporterEmail" },
+    { label: "Exporter phone", key: "exporterPhone" },
     { label: "PAN / registration", key: "exporterTaxId" },
     { label: "Consignee", key: "consigneeName" },
     { label: "Consignee address", key: "consigneeAddress" },
+    { label: "Consignee email", key: "consigneeEmail" },
+    { label: "Consignee phone", key: "consigneePhone" },
     { label: "Notify party", key: "notifyParty" },
   ],
   Invoice: [
@@ -1641,48 +1712,20 @@ function PhytosanitaryCertificate({ d, lines }: { d: FormData; lines: Goods[] })
 }
 
 function App() {
-  const [data, setData] = useState<FormData>(() => {
-    try {
-      return { ...initial, ...(JSON.parse(localStorage.getItem("cargoform.v3.shipment") || "null") || {}) };
-    } catch {
-      return initial;
-    }
-  });
+  const [data, setData] = useState<FormData>(initial);
   const [doc, setDoc] = useState<DocType>("COO");
   const [activeSection, setActiveSection] = useState("Shipment data");
   const [edit, setEdit] = useState(true);
   const [notes, setNotes] = useState("");
-  const [status, setStatus] = useState<ShipmentStatus>(
-    () =>
-      (localStorage.getItem("cargoform.v3.status") as ShipmentStatus) ||
-      "DRAFT",
-  );
-  const [amendments, setAmendments] = useState<Amendment[]>(() => {
-    try {
-      return JSON.parse(
-        localStorage.getItem("cargoform.v3.amendments") || "[]",
-      );
-    } catch {
-      return [];
-    }
-  });
+  const [status, setStatus] = useState<ShipmentStatus>("DRAFT");
+  const [amendments, setAmendments] = useState<Amendment[]>([]);
   const [amendField, setAmendField] = useState("Consignee / notify party");
   const [amendValue, setAmendValue] = useState("");
   const [amendReason, setAmendReason] = useState("");
-  const [extraGoods, setExtraGoods] = useState<Goods[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("cargoform.v4.goods") || "[]");
-    } catch {
-      return [];
-    }
-  });
-  const [contacts, setContacts] = useState<Contact[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("cargoform.v4.contacts") || "[]");
-    } catch {
-      return [];
-    }
-  });
+  const [extraGoods, setExtraGoods] = useState<Goods[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [savedParties, setSavedParties] = useState<SavedParty[]>([]);
+  const [partySyncMessage, setPartySyncMessage] = useState("");
   const [contactName, setContactName] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [contactRole, setContactRole] =
@@ -1694,27 +1737,16 @@ function App() {
   ]);
   const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
   const [emailDraftMessage, setEmailDraftMessage] = useState("");
-  const [boxes, setBoxes] = useState<PackingBox[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("cargoform.v5.boxes") || "[]");
-    } catch {
-      return [];
-    }
-  });
+  const [boxes, setBoxes] = useState<PackingBox[]>([]);
   const [airDivisor, setAirDivisor] = useState(6000);
-  const [history, setHistory] = useState<SavedShipment[]>(() => {
-    try { return JSON.parse(localStorage.getItem("cargoform.v6.history") || "[]"); } catch { return []; }
-  });
-  const [billing, setBilling] = useState<BillingRecord[]>(() => {
-    try { return JSON.parse(localStorage.getItem("cargoform.v6.billing") || "[]"); } catch { return []; }
-  });
-  const [organisation, setOrganisation] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("cargoform.v6.organisation") || "null") || { name: "Himalayan Cargo Workspace", pan: "", currency: "NPR", timezone: "Asia/Kathmandu" }; }
-    catch { return { name: "Himalayan Cargo Workspace", pan: "", currency: "NPR", timezone: "Asia/Kathmandu" }; }
-  });
+  const [history, setHistory] = useState<SavedShipment[]>([]);
+  const [billing, setBilling] = useState<BillingRecord[]>([]);
+  const [organisation, setOrganisation] = useState({ name: "", pan: "", currency: "NPR", timezone: "Asia/Kathmandu" });
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
   const [online, setOnline] = useState(navigator.onLine);
   const [loggedIn, setLoggedIn] = useState(false);
+  const [workspaceLoadedFor, setWorkspaceLoadedFor] = useState<string | null>(null);
+  const [workspaceSaveStatus, setWorkspaceSaveStatus] = useState("Saved on this device");
   const [authMode, setAuthMode] = useState<AuthMode>(authModeFromPath);
   const registrationMode = authMode === "REGISTER";
   const [authForm, setAuthForm] = useState({ email: "", password: "", confirmPassword: "", newPassword: "", displayName: "", legalName: "", accountType: "ORGANISATION", phone: "", dateOfBirth: "", residentialAddress: "", identityType: "Citizenship / passport", identityNumber: "", registrationNumber: "", panVat: "", registeredAddress: "", contactPerson: "" });
@@ -1725,34 +1757,19 @@ function App() {
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [adminUserCounts, setAdminUserCounts] = useState<AdminUserCounts>({ total: 0, active: 0, disabled: 0, pending: 0 });
   const [adminEmailDelivery, setAdminEmailDelivery] = useState<AdminEmailRecord[]>([]);
-  const [adminEmailStatus, setAdminEmailStatus] = useState<AdminEmailStatus>({ connected: false, sender: "app.netpack@gmail.com", queued: 0, failed: 0 });
+  const [adminEmailStatus, setAdminEmailStatus] = useState<AdminEmailStatus>({ connected: false, sender: "", queued: 0, failed: 0 });
   const [adminDecisionReasons, setAdminDecisionReasons] = useState<Record<string, string>>({});
   const [adminLoading, setAdminLoading] = useState(false);
   const [passwordChange, setPasswordChange] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
   const [passwordMessage, setPasswordMessage] = useState("");
-  const [profile, setProfile] = useState<MainProfile>(() => {
-    try { return JSON.parse(localStorage.getItem("cargoform.v7.profile") || "null") || { accountType: "ORGANISATION", status: "DRAFT", fullName: "", dateOfBirth: "", email: "", phone: "", address: "", identityType: "Citizenship / passport", identityNumber: "", legalName: "Himalayan Cargo Workspace", registrationNumber: "", panVat: "", incorporationDate: "", registeredAddress: "", contactPerson: "" }; }
-    catch { return { accountType: "ORGANISATION", status: "DRAFT", fullName: "", dateOfBirth: "", email: "", phone: "", address: "", identityType: "Citizenship / passport", identityNumber: "", legalName: "", registrationNumber: "", panVat: "", incorporationDate: "", registeredAddress: "", contactPerson: "" }; }
-  });
-  const [messages, setMessages] = useState<ChatMessage[]>(() => { try { return JSON.parse(localStorage.getItem("cargoform.v7.messages") || "[]"); } catch { return []; } });
+  const [profile, setProfile] = useState<MainProfile>(emptyProfile);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageThread, setMessageThread] = useState("ADMIN");
   const [messageBody, setMessageBody] = useState("");
-  const [notifications, setNotifications] = useState<AppNotification[]>(() => { try { return JSON.parse(localStorage.getItem("cargoform.v7.notifications") || "[]"); } catch { return []; } });
-  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreference[]>(() => {
-    try { return JSON.parse(localStorage.getItem("cargoform.v7.preferences") || "null") || [
-      { event: "Registration and Admin decision", email: true, inApp: true, recipient: "Main User" },
-      { event: "Staff or Client invitation", email: true, inApp: true, recipient: "Invitee + Main User" },
-      { event: "Client shipment submission", email: true, inApp: true, recipient: "Owning Main User only" },
-      { event: "Shipment confirmation or departure", email: true, inApp: true, recipient: "Main User + selected Client" },
-      { event: "Carrier submission or response", email: true, inApp: true, recipient: "Main User operations" },
-      { event: "Amendment status", email: true, inApp: true, recipient: "Requester + Main User" },
-      { event: "Document generated or approved", email: false, inApp: true, recipient: "Selected shipment participants" },
-      { event: "Invoice, payment or subscription", email: true, inApp: true, recipient: "Billing contacts" },
-      { event: "New chat message", email: true, inApp: true, recipient: "Thread participants only" },
-    ]; } catch { return []; }
-  });
-  const [emailConfig, setEmailConfig] = useState(() => { try { return JSON.parse(localStorage.getItem("cargoform.v8.emailConfig") || "null") || { sender: "app.netpack@gmail.com", adminRecipient: "app.netpack@gmail.com", provider: "Gmail OAuth", connected: false }; } catch { return { sender: "app.netpack@gmail.com", adminRecipient: "app.netpack@gmail.com", provider: "Gmail OAuth", connected: false }; } });
-  const [emailOutbox, setEmailOutbox] = useState<OutboundEmail[]>(() => { try { return JSON.parse(localStorage.getItem("cargoform.v8.emailOutbox") || "[]"); } catch { return []; } });
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationPreferences, setNotificationPreferences] = useState(defaultNotificationPreferences);
+  const [emailConfig, setEmailConfig] = useState({ sender: "", adminRecipient: "", provider: "", connected: false });
+  const [emailOutbox, setEmailOutbox] = useState<OutboundEmail[]>([]);
   const goodsLines = [data.goods, ...extraGoods];
   const houseIssuerName = data.hawbIssuerName.trim() ||
     (profile.accountType === "ORGANISATION" ? profile.legalName : profile.fullName) ||
@@ -1773,13 +1790,33 @@ function App() {
   );
   const apiBase = import.meta.env.VITE_API_BASE_URL || "/api";
   useEffect(() => {
+    let active = true;
     fetch(`${apiBase}/auth/me`, { credentials: "include" }).then(async (response) => {
-      if (!response.ok) throw new Error();
+      if (response.status === 401) {
+        if (active) {
+          setSessionInfo(null);
+          setLoggedIn(false);
+          setAuthMessage("");
+        }
+        return;
+      }
+      if (!response.ok) throw new Error("AUTH_SERVICE_UNAVAILABLE");
       const result = await response.json() as AuthSessionInfo;
-      setSessionInfo(result); setLoggedIn(true); setAuthMessage("");
-      if (result.role === "PLATFORM_ADMIN") setActiveSection("Admin dashboard");
-      if (result.organisation?.legalName) setOrganisation((current: typeof organisation) => ({ ...current, name: result.organisation.legalName }));
-    }).catch(() => { setSessionInfo(null); setLoggedIn(false); if (authMode === "LOGIN") setAuthMessage(""); });
+      if (!result.organisation?.id) throw new Error("INVALID_SESSION_RESPONSE");
+      if (active) {
+        setSessionInfo(result);
+        setLoggedIn(true);
+        setAuthMessage("");
+        if (result.role === "PLATFORM_ADMIN") setActiveSection("Admin dashboard");
+      }
+    }).catch(() => {
+      if (active) {
+        setSessionInfo(null);
+        setLoggedIn(false);
+        setAuthMessage("The secure account service is unavailable. Please try again later.");
+      }
+    });
+    return () => { active = false; };
   }, [apiBase]);
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
@@ -1818,27 +1855,107 @@ function App() {
       .finally(() => setAdminLoading(false));
   }, [apiBase, loggedIn, sessionInfo?.role]);
   useEffect(() => {
-    localStorage.setItem("cargoform.v3.shipment", JSON.stringify(data));
-    localStorage.setItem("cargoform.v3.status", status);
-    localStorage.setItem("cargoform.v3.amendments", JSON.stringify(amendments));
-  }, [data, status, amendments]);
+    const organisationId = sessionInfo?.organisation.id;
+    if (!loggedIn || !organisationId) {
+      setWorkspaceLoadedFor(null);
+      return;
+    }
+
+    const storedData = readWorkspaceStorage<Partial<FormData> | null>(organisationId, "shipment", null);
+    const storedOrganisation = readWorkspaceStorage<Partial<typeof organisation> | null>(organisationId, "organisation", null);
+    setData({ ...initial, ...(storedData || {}) });
+    setStatus(readWorkspaceStorage<ShipmentStatus>(organisationId, "status", "DRAFT"));
+    setAmendments(readWorkspaceStorage<Amendment[]>(organisationId, "amendments", []));
+    setExtraGoods(readWorkspaceStorage<Goods[]>(organisationId, "goods", []));
+    setContacts(readWorkspaceStorage<Contact[]>(organisationId, "contacts", []));
+    setBoxes(readWorkspaceStorage<PackingBox[]>(organisationId, "boxes", []));
+    setHistory(readWorkspaceStorage<SavedShipment[]>(organisationId, "history", []));
+    setBilling(readWorkspaceStorage<BillingRecord[]>(organisationId, "billing", []));
+    setOrganisation({
+      name: sessionInfo?.organisation.legalName || storedOrganisation?.name || "",
+      pan: storedOrganisation?.pan || "",
+      currency: storedOrganisation?.currency || "NPR",
+      timezone: storedOrganisation?.timezone || "Asia/Kathmandu",
+    });
+    setProfile({ ...emptyProfile, ...readWorkspaceStorage<Partial<MainProfile>>(organisationId, "profile", {}) });
+    setMessages(readWorkspaceStorage<ChatMessage[]>(organisationId, "messages", []));
+    setNotifications(readWorkspaceStorage<AppNotification[]>(organisationId, "notifications", []));
+    setNotificationPreferences(readWorkspaceStorage<NotificationPreference[]>(organisationId, "preferences", defaultNotificationPreferences));
+    setEmailConfig(readWorkspaceStorage(organisationId, "emailConfig", { sender: "", adminRecipient: "", provider: "", connected: false }));
+    setEmailOutbox(readWorkspaceStorage<OutboundEmail[]>(organisationId, "emailOutbox", []));
+    setWorkspaceLoadedFor(organisationId);
+  }, [loggedIn, sessionInfo?.organisation.id]);
   useEffect(() => {
-    localStorage.setItem("cargoform.v4.goods", JSON.stringify(extraGoods));
-    localStorage.setItem("cargoform.v4.contacts", JSON.stringify(contacts));
-  }, [extraGoods, contacts]);
-  useEffect(
-    () => localStorage.setItem("cargoform.v5.boxes", JSON.stringify(boxes)),
-    [boxes],
-  );
-  useEffect(() => localStorage.setItem("cargoform.v6.history", JSON.stringify(history)), [history]);
-  useEffect(() => localStorage.setItem("cargoform.v6.billing", JSON.stringify(billing)), [billing]);
-  useEffect(() => localStorage.setItem("cargoform.v6.organisation", JSON.stringify(organisation)), [organisation]);
-  useEffect(() => localStorage.setItem("cargoform.v7.profile", JSON.stringify(profile)), [profile]);
-  useEffect(() => localStorage.setItem("cargoform.v7.messages", JSON.stringify(messages)), [messages]);
-  useEffect(() => localStorage.setItem("cargoform.v7.notifications", JSON.stringify(notifications)), [notifications]);
-  useEffect(() => localStorage.setItem("cargoform.v7.preferences", JSON.stringify(notificationPreferences)), [notificationPreferences]);
-  useEffect(() => localStorage.setItem("cargoform.v8.emailConfig", JSON.stringify(emailConfig)), [emailConfig]);
-  useEffect(() => localStorage.setItem("cargoform.v8.emailOutbox", JSON.stringify(emailOutbox)), [emailOutbox]);
+    const organisationId = sessionInfo?.organisation.id;
+    if (!loggedIn || !organisationId || workspaceLoadedFor !== organisationId) return;
+    const saved = [
+      writeWorkspaceStorage(organisationId, "shipment", data),
+      writeWorkspaceStorage(organisationId, "status", status),
+      writeWorkspaceStorage(organisationId, "amendments", amendments),
+      writeWorkspaceStorage(organisationId, "goods", extraGoods),
+      writeWorkspaceStorage(organisationId, "contacts", contacts),
+      writeWorkspaceStorage(organisationId, "boxes", boxes),
+      writeWorkspaceStorage(organisationId, "history", history),
+      writeWorkspaceStorage(organisationId, "billing", billing),
+      writeWorkspaceStorage(organisationId, "organisation", organisation),
+      writeWorkspaceStorage(organisationId, "profile", profile),
+      writeWorkspaceStorage(organisationId, "messages", messages),
+      writeWorkspaceStorage(organisationId, "notifications", notifications),
+      writeWorkspaceStorage(organisationId, "preferences", notificationPreferences),
+      writeWorkspaceStorage(organisationId, "emailConfig", emailConfig),
+      writeWorkspaceStorage(organisationId, "emailOutbox", emailOutbox),
+    ];
+    setWorkspaceSaveStatus(saved.every(Boolean) ? "Saved on this device" : "Browser storage is unavailable");
+  }, [loggedIn, workspaceLoadedFor, sessionInfo?.organisation.id, data, status, amendments, extraGoods, contacts, boxes, history, billing, organisation, profile, messages, notifications, notificationPreferences, emailConfig, emailOutbox]);
+  useEffect(() => {
+    const organisationId = sessionInfo?.organisation.id;
+    if (!loggedIn || !organisationId || !["OWNER", "OPERATIONS", "REVIEWER", "FINANCE", "READ_ONLY"].includes(sessionInfo.role)) {
+      setSavedParties([]);
+      return;
+    }
+    let active = true;
+    fetch(`${apiBase}/parties`, { credentials: "include" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("SAVED_CONTACTS_UNAVAILABLE");
+        const result: unknown = await response.json();
+        if (!Array.isArray(result)) throw new Error("INVALID_SAVED_CONTACTS_RESPONSE");
+        return result as SavedParty[];
+      })
+      .then((parties) => { if (active) { setSavedParties(parties); setPartySyncMessage(""); } })
+      .catch(() => { if (active) setPartySyncMessage("Saved contacts could not be loaded from your organization. Please refresh or contact your administrator."); });
+    return () => { active = false; };
+  }, [apiBase, loggedIn, sessionInfo?.organisation.id, sessionInfo?.role]);
+  useEffect(() => {
+    if (!loggedIn || !sessionInfo || workspaceLoadedFor !== sessionInfo.organisation.id || !["OWNER", "OPERATIONS"].includes(sessionInfo.role)) return;
+    const entries: Omit<SavedParty, "id">[] = [
+      { kind: "EXPORTER", name: data.exporterName.trim(), address: data.exporterAddress.trim(), email: data.exporterEmail.trim(), phone: data.exporterPhone.trim(), taxId: data.exporterTaxId.trim() },
+      { kind: "CONSIGNEE", name: data.consigneeName.trim(), address: data.consigneeAddress.trim(), email: data.consigneeEmail.trim(), phone: data.consigneePhone.trim(), taxId: "" },
+    ];
+    if (!entries.some((entry) => entry.name)) return;
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      for (const entry of entries) {
+        if (!entry.name || !active) continue;
+        try {
+          const response = await fetch(`${apiBase}/parties`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(entry),
+          });
+          if (!response.ok) throw new Error("SAVED_CONTACT_SYNC_FAILED");
+          const savedParty = await response.json() as SavedParty;
+          if (active) {
+            setSavedParties((current) => [savedParty, ...current.filter((party) => party.id !== savedParty.id)]);
+            setPartySyncMessage("Contact details are automatically saved to your organization's account.");
+          }
+        } catch {
+          if (active) setPartySyncMessage("Contact details could not be saved to your organization. Check your connection and permissions.");
+        }
+      }
+    }, 750);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [apiBase, loggedIn, workspaceLoadedFor, sessionInfo?.organisation.id, sessionInfo?.role, data.exporterName, data.exporterAddress, data.exporterEmail, data.exporterPhone, data.exporterTaxId, data.consigneeName, data.consigneeAddress, data.consigneeEmail, data.consigneePhone]);
   useEffect(() => {
     const capture = (event: Event) => { event.preventDefault(); setInstallPrompt(event as InstallPromptEvent); };
     const goOnline = () => setOnline(true), goOffline = () => setOnline(false);
@@ -1871,6 +1988,10 @@ function App() {
     const e: string[] = [];
     if (!data.exporterName || !data.consigneeName)
       e.push("Exporter and consignee are required.");
+    if (data.exporterEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.exporterEmail))
+      e.push("Enter a valid exporter email address.");
+    if (data.consigneeEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.consigneeEmail))
+      e.push("Enter a valid consignee email address.");
     if (!/^\d{4}(\.\d{2})?/.test(data.goods.hsCode))
       e.push("Enter at least a 4-digit HS code.");
     if ((doc === "MAWB" || doc === "HAWB") && !data.departure)
@@ -1896,6 +2017,8 @@ function App() {
       e.push("Enter a House Bill of Lading number.");
     if (doc === "HBL" && !houseBlIssuerName.trim())
       e.push("Enter the freight forwarder, NVOCC, Main User or approved client issuing the House Bill of Lading.");
+    if (doc === "HBL" && !data.hblReleaseType)
+      e.push("Choose the HBL release and negotiability type.");
     if ((doc === "BILL_OF_LADING" || doc === "HBL") && (!data.loadingPort || !data.dischargePort))
       e.push("Loading and discharge ports are required.");
     if (
@@ -1952,6 +2075,23 @@ function App() {
       }
       return next;
     });
+  const applySavedParty = (partyId: string) => {
+    const party = savedParties.find((saved) => saved.id === partyId);
+    if (!party) return;
+    setData((current) => party.kind === "EXPORTER"
+      ? { ...current, exporterName: party.name, exporterAddress: party.address, exporterEmail: party.email, exporterPhone: party.phone, exporterTaxId: party.taxId }
+      : { ...current, consigneeName: party.name, consigneeAddress: party.address, consigneeEmail: party.email, consigneePhone: party.phone });
+  };
+  const deleteSavedParty = async (partyId: string) => {
+    try {
+      const response = await fetch(`${apiBase}/parties/${encodeURIComponent(partyId)}`, { method: "DELETE", credentials: "include" });
+      if (!response.ok) throw new Error("SAVED_CONTACT_DELETE_FAILED");
+      setSavedParties((parties) => parties.filter((party) => party.id !== partyId));
+      setPartySyncMessage("Saved contact removed from your organization's account.");
+    } catch {
+      setPartySyncMessage("Saved contact could not be deleted. Check your connection and permissions.");
+    }
+  };
   const setGood = (k: keyof Goods, v: string) =>
     setData((d) => ({ ...d, goods: { ...d.goods, [k]: v } }));
   const setExtraGood = (index: number, k: keyof Goods, v: string) =>
@@ -2122,7 +2262,8 @@ function App() {
       setData(initial);
       setStatus("DRAFT");
       setAmendments([]);
-      localStorage.removeItem("cargoform.v3.shipment");
+      setExtraGoods([]);
+      setBoxes([]);
     }
   };
   const title =
@@ -2401,7 +2542,7 @@ function App() {
       const pending = adminApplications.filter((item) => item.status === "SUBMITTED" || item.status === "CHANGES_REQUESTED").length;
       const approved = adminApplications.filter((item) => item.status === "APPROVED").length;
       const failedEmails = adminEmailDelivery.filter((item) => item.status === "FAILED").length;
-      return <section className="module-page"><div className="module-head"><div><p className="eyebrow">PLATFORM ADMIN</p><h2>Administration dashboard</h2><small>Account governance is separated from confidential shipment content.</small></div><div className="button-pair"><button onClick={()=>setActiveSection("User management")}>Manage users</button><button onClick={()=>setActiveSection("Main User approvals")}>Review registrations</button><button disabled={adminLoading} onClick={refreshAdminData}>{adminLoading ? "Refreshing…" : "Refresh"}</button></div></div><div className="admin-metrics"><div><b>{adminUserCounts.total}</b><span>Total registered users</span></div><div><b>{adminUserCounts.active}</b><span>Active users</span></div><div><b>{adminUserCounts.disabled}</b><span>Disabled users</span></div><div><b>{pendingVerification}</b><span>Email verification pending</span></div><div><b>{pending}</b><span>Awaiting Admin review</span></div><div><b>{approved}</b><span>Approved Main Users</span></div><div><b>{adminEmailStatus.queued}</b><span>Queued emails</span></div><div className={failedEmails ? "attention" : ""}><b>{failedEmails}</b><span>Failed emails</span></div></div><div className={`admin-callout ${adminEmailStatus.connected ? "connected" : "attention"}`}><div><h3>{adminEmailStatus.connected ? "Gmail delivery connected" : "Action required: connect Gmail"}</h3><p>{adminEmailStatus.connected ? `${adminEmailStatus.sender} is authorized for CargoForm notifications.` : "Verification and approval emails cannot be delivered until app.netpack@gmail.com is authorized."}</p></div>{!adminEmailStatus.connected && <button onClick={connectGmail}>Connect Gmail securely</button>}</div>{authMessage && <p className="status-message">{authMessage}</p>}</section>;
+      return <section className="module-page"><div className="module-head"><div><p className="eyebrow">PLATFORM ADMIN</p><h2>Administration dashboard</h2><small>Account governance is separated from confidential shipment content.</small></div><div className="button-pair"><button onClick={()=>setActiveSection("User management")}>Manage users</button><button onClick={()=>setActiveSection("Main User approvals")}>Review registrations</button><button disabled={adminLoading} onClick={refreshAdminData}>{adminLoading ? "Refreshing…" : "Refresh"}</button></div></div><div className="admin-metrics"><div><b>{adminUserCounts.total}</b><span>Total registered users</span></div><div><b>{adminUserCounts.active}</b><span>Active users</span></div><div><b>{adminUserCounts.disabled}</b><span>Disabled users</span></div><div><b>{pendingVerification}</b><span>Email verification pending</span></div><div><b>{pending}</b><span>Awaiting Admin review</span></div><div><b>{approved}</b><span>Approved Main Users</span></div><div><b>{adminEmailStatus.queued}</b><span>Queued emails</span></div><div className={failedEmails ? "attention" : ""}><b>{failedEmails}</b><span>Failed emails</span></div></div><div className={`admin-callout ${adminEmailStatus.connected ? "connected" : "attention"}`}><div><h3>{adminEmailStatus.connected ? "Gmail delivery connected" : "Action required: connect Gmail"}</h3><p>{adminEmailStatus.connected ? `${adminEmailStatus.sender} is authorized for CargoForm notifications.` : "Verification and approval emails cannot be delivered until a verified sender is configured."}</p></div>{!adminEmailStatus.connected && <button onClick={connectGmail}>Connect Gmail securely</button>}</div>{authMessage && <p className="status-message">{authMessage}</p>}</section>;
     }
     if (activeSection === "User management") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">ACCESS ADMINISTRATION</p><h2>Users</h2><small>Edit Main User identity and company details, restore disabled accounts, or delete login access. Operational and audit history is retained.</small></div><button disabled={adminLoading} onClick={refreshAdminData}>{adminLoading ? "Refreshing…" : "Refresh"}</button></div><div className="admin-metrics"><div><b>{adminUserCounts.total}</b><span>Total users</span></div><div><b>{adminUserCounts.active}</b><span>Active</span></div><div><b>{adminUserCounts.pending}</b><span>Pending approval</span></div><div><b>{adminUserCounts.disabled}</b><span>Disabled</span></div></div>{adminUsers.length === 0 ? <div className="empty-state">No Main Users have registered.</div> : <div className="application-list">{adminUsers.map((user)=><article className="application-card user-management-card" key={user.id}><div className="application-head"><div><h3>{user.displayName}</h3><p>{user.role.replaceAll("_", " ")} · Registered {new Date(user.createdAt).toLocaleDateString()}</p></div><span className={`status ${user.disabled ? "rejected" : "approved"}`}>{user.disabled ? "ACCESS DELETED" : "ACTIVE"}</span></div><div className="settings-grid"><label>Full name<input value={user.displayName} onChange={(e)=>setAdminUsers((items)=>items.map((item)=>item.id===user.id?{...item,displayName:e.target.value}:item))}/></label><label>Email ID<input type="email" value={user.email} onChange={(e)=>setAdminUsers((items)=>items.map((item)=>item.id===user.id?{...item,email:e.target.value}:item))}/></label><label>Mobile number<input value={user.phone || ""} onChange={(e)=>setAdminUsers((items)=>items.map((item)=>item.id===user.id?{...item,phone:e.target.value}:item))}/></label><label>Company name<input value={user.companyName} onChange={(e)=>setAdminUsers((items)=>items.map((item)=>item.id===user.id?{...item,companyName:e.target.value}:item))}/></label><label>Login access<select value={user.disabled ? "DISABLED" : "ACTIVE"} onChange={(e)=>setAdminUsers((items)=>items.map((item)=>item.id===user.id?{...item,disabled:e.target.value==="DISABLED"}:item))}><option value="ACTIVE">Active</option><option value="DISABLED">Disabled</option></select></label><label>Registration status<input value={user.applicationStatus || user.organisationStatus} readOnly/></label></div><div className="decision-actions"><button disabled={adminLoading} onClick={()=>updateAdminUser(user)}>Save changes</button><button className="danger" disabled={adminLoading || user.disabled} onClick={()=>deleteAdminUserAccess(user)}>Delete login access</button></div></article>)}</div>}{authMessage && <p className="status-message">{authMessage}</p>}</section>;
     if (activeSection === "Main User approvals") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">ACCOUNT GOVERNANCE</p><h2>Main User registrations</h2><small>Unverified registrations remain visible, but approval starts only after email verification.</small></div><button disabled={adminLoading} onClick={refreshAdminData}>{adminLoading ? "Refreshing…" : "Refresh"}</button></div>{adminApplications.length === 0 ? <div className="empty-state">No Main User registrations have been received.</div> : <div className="application-list">{adminApplications.map((application) => <article className="application-card" key={application.id}><div className="application-head"><div><h3>{application.organisation.legalName}</h3><p>{application.applicantEmail} · {application.accountType.toLowerCase()}</p></div><span className={`status ${application.status.toLowerCase()}`}>{application.status === "DRAFT" ? "EMAIL VERIFICATION PENDING" : application.status.replaceAll("_", " ")}</span></div><dl><div><dt>Registration no.</dt><dd>{application.organisation.registrationNumber || "Not supplied"}</dd></div><div><dt>PAN / VAT</dt><dd>{application.organisation.panVat || "Not supplied"}</dd></div><div><dt>Phone</dt><dd>{String(application.payload?.phone || "Not supplied")}</dd></div><div><dt>Submitted</dt><dd>{application.submittedAt ? new Date(application.submittedAt).toLocaleString() : "Not submitted — email verification required"}</dd></div></dl>{application.status === "DRAFT" && <p className="application-guidance">The applicant must open the verification email before this registration can be reviewed. Check Email delivery if the message has failed.</p>}{application.status === "SUBMITTED" || application.status === "CHANGES_REQUESTED" ? <><label>Review reason<textarea value={adminDecisionReasons[application.id] || ""} onChange={(event)=>setAdminDecisionReasons((current)=>({ ...current, [application.id]: event.target.value }))} placeholder="Record the evidence reviewed and reason for this decision."/></label><div className="decision-actions"><button disabled={adminLoading} onClick={()=>decideApplication(application.id,"APPROVED")}>Approve and notify applicant</button><button disabled={adminLoading} onClick={()=>decideApplication(application.id,"CHANGES_REQUESTED")}>Request changes and notify</button><button className="danger" disabled={adminLoading} onClick={()=>decideApplication(application.id,"REJECTED")}>Reject and notify</button></div></> : null}</article>)}</div>}{authMessage && <p className="status-message">{authMessage}</p>}</section>;
@@ -2425,13 +2566,23 @@ function App() {
       return <section className="module-page"><div className="module-head"><div><p className="eyebrow">TEMPLATES</p><h2>Documents</h2></div></div><div className="module-cards">{docs.map(([kind,name]) => <button key={kind} onClick={() => openDocument(kind)}><FileText/><b>{name}</b><small>Open editable A4 draft</small></button>)}</div></section>;
     }
     if (activeSection === "Billing & payments") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">FINANCE</p><h2>Billing & payments</h2><small>Platform subscription ledger. Client freight invoices remain a separate Main User ledger.</small></div><button onClick={addBillingRecord}>New invoice</button></div><div className="payment-options"><b>Payment priority</b><span>Bank transfer / connectIPS · eSewa ePay · Khalti</span></div>{billing.length === 0 ? <div className="empty-state">No billing records.</div> : <div className="record-list">{billing.map((item) => <div className="record-editor billing-row" key={item.id}><input value={item.reference} onChange={(e) => setBilling((all)=>all.map((x)=>x.id===item.id?{...x,reference:e.target.value}:x))}/><input value={item.party} onChange={(e) => setBilling((all)=>all.map((x)=>x.id===item.id?{...x,party:e.target.value}:x))}/><input type="number" value={item.amount} onChange={(e) => setBilling((all)=>all.map((x)=>x.id===item.id?{...x,amount:Number(e.target.value)}:x))}/><select value={item.status} onChange={(e)=>setBilling((all)=>all.map((x)=>x.id===item.id?{...x,status:e.target.value as BillingRecord["status"]}:x))}><option>DRAFT</option><option>ISSUED</option><option>PAID</option><option>VOID</option></select><button onClick={()=>setBilling((all)=>all.filter((x)=>x.id!==item.id))}>Delete</button></div>)}</div>}</section>;
-    if (activeSection === "Settings") return <section className="module-page"><div className="module-head"><div><p className="eyebrow">WORKSPACE</p><h2>Organisation settings</h2></div>{installPrompt && <button onClick={installApp}>Install CargoForm app</button>}</div><div className="settings-grid"><label>Organisation name<input value={organisation.name} onChange={(e)=>setOrganisation({...organisation,name:e.target.value})}/></label><label>PAN / registration<input value={organisation.pan} onChange={(e)=>setOrganisation({...organisation,pan:e.target.value})}/></label><label>Base currency<input value={organisation.currency} onChange={(e)=>setOrganisation({...organisation,currency:e.target.value.toUpperCase()})}/></label><label>Timezone<input value={organisation.timezone} onChange={(e)=>setOrganisation({...organisation,timezone:e.target.value})}/></label></div><div className={`offline-state ${online ? "online" : "offline"}`}><b>{online ? "Online" : "Offline mode"}</b><span>{online ? "Changes are saved on this device." : "The cached app remains available; network submissions wait until connectivity returns."}</span></div></section>;
+    if (activeSection === "Settings") return <section className="module-page">
+      <div className="module-head"><div><p className="eyebrow">WORKSPACE</p><h2>Organisation settings</h2></div>{installPrompt && <button onClick={installApp}>Install CargoForm app</button>}</div>
+      <div className="settings-grid">
+        <label>Organisation name<input value={organisation.name} onChange={(e)=>setOrganisation({...organisation,name:e.target.value})}/></label>
+        <label>PAN / registration<input value={organisation.pan} onChange={(e)=>setOrganisation({...organisation,pan:e.target.value})}/></label>
+        <label>Base currency<input value={organisation.currency} onChange={(e)=>setOrganisation({...organisation,currency:e.target.value.toUpperCase()})}/></label>
+        <label>Timezone<input value={organisation.timezone} onChange={(e)=>setOrganisation({...organisation,timezone:e.target.value})}/></label>
+      </div>
+      <div className={`offline-state ${online ? "online" : "offline"}`}><b>{online ? "Online" : "Offline mode"}</b><span>{online ? "Workspace changes are stored on this device under an organization-specific key." : "The cached app remains available; changes are saved locally and network submissions wait until connectivity returns."}</span></div>
+      <p className="privacy-note">Shipment, profile and workspace data are stored in this browser and are not end-to-end encrypted. Use a trusted device, keep its account protected, and sign out when finished. Saved exporter and consignee contacts sync to the authenticated organization through the API.</p>
+    </section>;
     return null;
   };
   const sections = sessionInfo?.role === "PLATFORM_ADMIN"
     ? ["Admin dashboard", "User management", "Main User approvals", "Email delivery", "Notifications", "Messages", "Billing & payments", "Settings"]
     : ["Shipment data", "Shipment history", "Staffs", "Clients", "Carriers", "Documents", "Profile", "Messages", "Notifications", "Email setup", "Billing & payments", "Settings"];
-  if (!DIRECT_WEB_ACCESS && !loggedIn) return <div className="auth-screen"><div className="auth-card"><div className="brand auth-brand"><span><Box size={21}/></span><b>CargoForm</b></div><p className="eyebrow">SECURE WORKSPACE</p><h1>{authMode === "REGISTER" ? "Create your Main User account" : authMode === "FORGOT" ? "Reset your password" : authMode === "RESET" ? "Choose a new password" : authMode === "VERIFY" ? "Verify your email" : "Welcome back"}</h1><p>{authMode === "REGISTER" ? "Enter the essential details below. After registration, verify your email and the Platform Admin will review your account." : authMode === "FORGOT" ? "We will send a time-limited reset link if this account is active." : authMode === "RESET" ? "Use at least 12 characters with uppercase, lowercase and a number." : authMode === "VERIFY" ? "CargoForm is validating this secure registration link." : "Sign in with your email address or mobile number and password."}</p>
+  if (!loggedIn) return <div className="auth-screen"><div className="auth-card"><div className="brand auth-brand"><span><Box size={21}/></span><b>CargoForm</b></div><p className="eyebrow">SECURE WORKSPACE</p><h1>{authMode === "REGISTER" ? "Create your Main User account" : authMode === "FORGOT" ? "Reset your password" : authMode === "RESET" ? "Choose a new password" : authMode === "VERIFY" ? "Verify your email" : "Welcome back"}</h1><p>{authMode === "REGISTER" ? "Enter the essential details below. After registration, verify your email and the Platform Admin will review your account." : authMode === "FORGOT" ? "We will send a time-limited reset link if this account is active." : authMode === "RESET" ? "Use at least 12 characters with uppercase, lowercase and a number." : authMode === "VERIFY" ? "CargoForm is validating this secure registration link." : "Sign in with your email address or mobile number and password."}</p>
     {authMode === "REGISTER" && <><label>Full name<input value={authForm.displayName} onChange={(e)=>setAuthForm({...authForm,displayName:e.target.value})} autoComplete="name"/></label><label>Email ID<input type="email" value={authForm.email} onChange={(e)=>setAuthForm({...authForm,email:e.target.value})} autoComplete="email"/></label><label>Mobile number<input type="tel" value={authForm.phone} onChange={(e)=>setAuthForm({...authForm,phone:e.target.value})} autoComplete="tel" placeholder="+977…"/></label><label>Company name <small>(optional)</small><input value={authForm.legalName} onChange={(e)=>setAuthForm({...authForm,legalName:e.target.value})} autoComplete="organization"/></label><label>Password<input type={showPassword?"text":"password"} value={authForm.password} onChange={(e)=>setAuthForm({...authForm,password:e.target.value})} autoComplete="new-password"/></label><label className="show-password"><input type="checkbox" checked={showPassword} onChange={(e)=>setShowPassword(e.target.checked)}/> Show password</label><small className="password-rule">Use at least 12 characters, including uppercase, lowercase and a number.</small></>}
     {authMode === "LOGIN" && <><label>Email ID or mobile number<input value={authForm.email} onChange={(e)=>setAuthForm({...authForm,email:e.target.value})} autoComplete="username"/></label><label>Password<input type={showPassword?"text":"password"} value={authForm.password} onChange={(e)=>setAuthForm({...authForm,password:e.target.value})} autoComplete="current-password"/></label><label className="show-password"><input type="checkbox" checked={showPassword} onChange={(e)=>setShowPassword(e.target.checked)}/> Show password</label></>}
     {authMode === "FORGOT" && <label>Email ID<input type="email" value={authForm.email} onChange={(e)=>setAuthForm({...authForm,email:e.target.value})} autoComplete="email"/></label>}
@@ -2443,7 +2594,7 @@ function App() {
     {authMode === "VERIFY" && <button className="auth-primary" onClick={()=>navigateAuth("LOGIN")}>Continue to sign in</button>}
     {authMode === "LOGIN" && <><div className="auth-links"><button onClick={()=>navigateAuth("FORGOT")}>Forgot password?</button><button onClick={resendVerification}>Resend verification</button></div><button className="auth-secondary" onClick={()=>navigateAuth("REGISTER")}>New Main User? Create account</button></>}
     {(authMode === "REGISTER" || authMode === "FORGOT" || authMode === "RESET") && <button className="auth-secondary" onClick={()=>navigateAuth("LOGIN")}>Back to sign in</button>}
-    {authMessage && <small className="auth-message" role="status">{authMessage}</small>}<small>Platform Admin: app.netpack@gmail.com. Public Admin registration is disabled; Main User registrations require verified email and Admin approval.</small></div></div>;
+    {authMessage && <small className="auth-message" role="status">{authMessage}</small>}<small>Platform Admin registration is disabled; Main User registrations require verified email and Admin approval.</small></div></div>;
   return (
     <div className="app">
       <aside>
@@ -2473,9 +2624,9 @@ function App() {
             Sources reviewed 17 Aug 2026
           </small>
         </div>
-        {!DIRECT_WEB_ACCESS && <button className="logout-button" onClick={async()=>{await fetch(`${apiBase}/auth/logout`,{method:"POST",credentials:"include"});setSessionInfo(null);setLoggedIn(false);setActiveSection("Shipment data");}}>
+        <button className="logout-button" onClick={async()=>{try { const response = await fetch(`${apiBase}/auth/logout`,{method:"POST",credentials:"include"}); if (!response.ok) throw new Error("LOGOUT_FAILED"); setSessionInfo(null);setLoggedIn(false);setWorkspaceLoaded(false);setActiveSection("Shipment data"); } catch { setAuthMessage("Sign out could not be completed. Please check your connection and try again."); }}}>
           Logout
-        </button>}
+        </button>
       </aside>
       <main>
         <header>
@@ -2487,8 +2638,9 @@ function App() {
             </p>
           </div>
           <div className="saved">
-            <Check size={14} /> {online ? "Saved on this device" : "Offline · saved locally"}
+            <Check size={14} /> {online ? workspaceSaveStatus : "Offline · saved locally"}
           </div>
+          {authMessage && <p className="field-help" role="status">{authMessage}</p>}
         </header>
         {activeSection !== "Shipment data" && renderModule()}
         <div className={activeSection === "Shipment data" ? "shipment-module" : "shipment-module hidden"}>
@@ -2588,7 +2740,7 @@ function App() {
               </a>
             ) : null}
             {status === "CONFIRMED" && data.operationsUrl && (
-              <a href={data.operationsUrl} target="_blank">
+              <a href={data.operationsUrl} target="_blank" rel="noopener noreferrer">
                 Cargo operations ↗
               </a>
             )}
@@ -2884,6 +3036,44 @@ function App() {
             {Object.entries(fields).map(([group, fs]) => (
               <fieldset key={group}>
                 <legend>{group}</legend>
+                {group === "Parties" && (
+                  <>
+                    <div className="grid">
+                      <label>
+                        Reuse saved exporter
+                        <select value="" onChange={(event) => applySavedParty(event.target.value)}>
+                          <option value="">Choose an exporter…</option>
+                          {savedParties.filter((party) => party.kind === "EXPORTER").map((party) => (
+                            <option key={party.id} value={party.id}>{party.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Reuse saved consignee
+                        <select value="" onChange={(event) => applySavedParty(event.target.value)}>
+                          <option value="">Choose a consignee…</option>
+                          {savedParties.filter((party) => party.kind === "CONSIGNEE").map((party) => (
+                            <option key={party.id} value={party.id}>{party.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    {savedParties.length > 0 && (
+                      <div className="record-list">
+                        {savedParties.map((party) => (
+                          <div className="record-row" key={party.id}>
+                            <span>{party.kind === "EXPORTER" ? "Exporter" : "Consignee"} · {party.name}</span>
+                            {["OWNER", "OPERATIONS"].includes(sessionInfo?.role || "") && (
+                              <button type="button" onClick={() => void deleteSavedParty(party.id)}>Delete saved contact</button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {partySyncMessage && <p className="field-help" role="status">{partySyncMessage}</p>}
+                    <p className="privacy-note">Contact details are automatically saved to your authenticated organization after you edit them and can be reused in future shipments.</p>
+                  </>
+                )}
                 <div className="grid">
                   {fs.map((f) => (
                     <label key={f.key}>
@@ -2897,13 +3087,29 @@ function App() {
                             ? "date"
                             : f.key === "estimatedDeparture"
                               ? "datetime-local"
+                              : f.key === "exporterEmail" || f.key === "consigneeEmail"
+                                ? "email"
+                                : f.key === "exporterPhone" || f.key === "consigneePhone"
+                                  ? "tel"
                               : "text"
                         }
                         value={data[f.key] as string}
                         onChange={(e) => set(f.key, e.target.value)}
-                        placeholder={f.key === "documentNo" && doc === "MAWB" ? "157-12345675" : undefined}
+                        autoComplete={
+                          f.key === "exporterName" || f.key === "consigneeName" ? "organization" :
+                            f.key === "exporterAddress" || f.key === "consigneeAddress" ? "street-address" :
+                              f.key === "exporterEmail" || f.key === "consigneeEmail" ? "email" :
+                                f.key === "exporterPhone" || f.key === "consigneePhone" ? "tel" : undefined
+                        }
+                        maxLength={
+                          f.key === "documentNo" && doc === "MAWB" ? 12 :
+                            f.key === "exporterName" || f.key === "consigneeName" ? 160 :
+                            f.key === "exporterAddress" || f.key === "consigneeAddress" ? 1000 :
+                              f.key === "exporterEmail" || f.key === "consigneeEmail" ? 254 :
+                                f.key === "exporterPhone" || f.key === "consigneePhone" ? 40 : undefined
+                        }
+                        placeholder={f.key === "documentNo" && doc === "MAWB" ? "000-00000000" : undefined}
                         inputMode={f.key === "documentNo" && doc === "MAWB" ? "numeric" : undefined}
-                        maxLength={f.key === "documentNo" && doc === "MAWB" ? 12 : undefined}
                       />
                       {f.key === "documentNo" && (
                         <small className="field-help">
@@ -2988,6 +3194,7 @@ function App() {
                   <label>
                     Release / negotiability
                     <select disabled={locked} value={data.hblReleaseType} onChange={(e) => set("hblReleaseType", e.target.value)}>
+                      <option value="">Select release type</option>
                       <option>ORIGINAL — NEGOTIABLE</option>
                       <option>NON-NEGOTIABLE</option>
                       <option>SEA WAYBILL / EXPRESS RELEASE</option>
@@ -3336,7 +3543,7 @@ function App() {
                       <li key={x}>{x}</li>
                     ))}
                   </ul>
-                  <a href={rule.url} target="_blank">
+                  <a href={rule.url} target="_blank" rel="noopener noreferrer">
                     {rule.source} ↗
                   </a>
                 </div>

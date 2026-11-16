@@ -17,7 +17,7 @@ Open `http://127.0.0.1:5173/`. A production build is available with `npm run bui
 - Email Setup module configured for `app.netpack@gmail.com`, including Platform Admin recipient, Gmail OAuth connection state and a registration-event outbox that remains QUEUED until the provider accepts it.
 - Main User onboarding with Individual versus Organisation field sets, editable profile, Admin-review submission status and registration notifications.
 - Controlled messaging for Main User↔Platform Admin and Main User↔owned Client threads, plus event-based email/in-app preferences and notification inbox CRUD.
-- Working logout/sign-in demonstration that ends the session without deleting tenant records; production authentication requirements remain documented.
+- Authenticated workspace access with server-side login/logout. Shipment and profile drafts are saved in organization-specific browser storage; saved exporter/consignee contact details sync through tenant-scoped API routes.
 - Functional sidebar modules: shipment snapshots (save/open/delete), editable staff/client/carrier records, document library, editable billing ledger and persisted organisation settings.
 - Installable PWA shell with manifest, app identity/icon, standalone display, responsive mobile bottom navigation, connectivity state and offline service-worker caching.
 - Capacitor mobile-app configuration plus a generated/synchronized Android native project using the same production web build.
@@ -36,7 +36,7 @@ Open `http://127.0.0.1:5173/`. A production build is available with `npm run bui
 - Template and rule-pack version labels, with authority disclaimer and source links inside each ruleset.
 - Shipment lifecycle controls: draft, confirmed, and departed states; editable/deletable before departure; locked source snapshot plus auditable amendment requests after departure.
 - MAWB-prefix and starter ocean-carrier-prefix resolution, editable carrier identity, carrier tracking links, and operations/support links after confirmation.
-- Local draft persistence and amendment status tracking. Production carrier integration remains an API/credential deployment task.
+- Organization-scoped local draft persistence and amendment status tracking. Authenticated contact sync requires the API deployment and Prisma migrations; production carrier integration remains an API/credential deployment task.
 - Multi-line goods entry with add/remove controls and propagation into Commercial Invoice and Packing List outputs.
 - Professional generalized Commercial Invoice and Packing List templates.
 - Multiple role-tagged contacts, client-invitation workflow preview, selectable email-document packages, and the required structured subject line.

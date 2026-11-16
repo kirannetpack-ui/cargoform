@@ -33,7 +33,7 @@ Platform Admin may not:
 - erase audit, payment, issued-document or statutory records through the ordinary UI;
 - create additional Platform Admins through an open registration page.
 
-Initial Platform Admin bootstrap is one-time, deployment-controlled and limited to `app.netpack@gmail.com`. After success, bootstrap is disabled.
+Initial Platform Admin bootstrap is one-time, deployment-controlled and limited to the configured `PLATFORM_ADMIN_EMAIL`. After success, bootstrap is disabled.
 
 ## 3. Main User subscription plans
 

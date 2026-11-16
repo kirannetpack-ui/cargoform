@@ -1,6 +1,6 @@
 # CargoForm production backend boundary
 
-The browser MVP demonstrates the workflow but must not be treated as a secure multi-user or email-sending system. Production deployment requires a server-side API, database, object storage, authentication, background jobs, and connected email/carrier providers.
+The frontend requires server-side authentication and tenant-scoped APIs. A frontend-only deployment must not be treated as a usable production workspace. Production deployment requires a server-side API, database, object storage, authentication, background jobs, and connected email/carrier providers.
 
 ## Roles and approval
 
