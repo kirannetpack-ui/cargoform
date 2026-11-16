@@ -35,6 +35,7 @@ type Goods = {
   botanicalName: string;
   hsCode: string;
   packages: string;
+  lineValue: string;
   grossWeight: string;
   netWeight: string;
   quantity: string;
@@ -277,6 +278,7 @@ const initial: FormData = {
     botanicalName: "",
     hsCode: "",
     packages: "",
+    lineValue: "",
     grossWeight: "",
     netWeight: "",
     quantity: "",
@@ -879,18 +881,18 @@ function AwbForm({ d, lines, boxes, divisor, houseIssuerName }: { d: FormData; l
           </tr>
         </thead>
         <tbody>
-            <tr>
-              <td>{totals.pieces}</td>
-              <td>{totals.actualKg.toFixed(2)}</td>
-              <td>K</td>
-              <td>Q</td>
-              <td>{totals.chargeableKg.toFixed(2)}</td>
+            {lines.map((goods, index) => (
+              <tr key={index}>
+                <td>{index === 0 ? totals.pieces : ""}</td>
+                <td>{index === 0 ? `${totals.actualKg.toFixed(2)} kg` : ""}</td>
+                <td>{index === 0 ? "K" : ""}</td>
+                <td>Q</td>
+                <td>{index === 0 ? totals.chargeableKg.toFixed(2) : ""}</td>
               <td>—</td>
-              <td>—</td>
-              <td>
-                {lines.map((g, i) => <div key={i}><b>HS {g.hsCode || "pending"}</b> — {g.description || `Goods item ${i + 1}`}</div>)}
-              </td>
-            </tr>
+                <td>—</td>
+                <td><b>HS {goods.hsCode || "pending"}</b> — {goods.description || `Goods item ${index + 1}`}<br />{goods.packages} · {goods.quantity}</td>
+              </tr>
+            ))}
         </tbody>
       </table>
       <div className="charges-grid">
@@ -980,22 +982,15 @@ function BlForm({ d, lines, boxes, divisor, houseIssuerName }: { d: FormData; li
           </tr>
         </thead>
         <tbody>
-            <tr>
-              <td>
-                SHIPPER'S MARKS
-                <br />
-                {d.invoiceNo} · Container /
-                seal: TBA
-              </td>
-              <td>{totals.pieces} BOX{totals.pieces === 1 ? "" : "ES"}</td>
-              <td>
-                <b>SAID TO CONTAIN</b>
-                <br />
-                {lines.map((g, i) => <div key={i}><b>HS {g.hsCode || "pending"}</b> — {g.description || `Goods item ${i + 1}`}</div>)}
-              </td>
-              <td>{totals.actualKg.toFixed(2)} kg</td>
-              <td>{totals.cbm.toFixed(4)} m³</td>
-            </tr>
+            {lines.map((goods, index) => (
+              <tr key={index}>
+                <td>SHIPPER'S MARKS<br />{d.invoiceNo || "—"} · Container / seal: TBA</td>
+                <td>{goods.packages || (index === 0 ? `${totals.pieces} BOX${totals.pieces === 1 ? "" : "ES"}` : "")}</td>
+                <td><b>SAID TO CONTAIN</b><br /><b>HS {goods.hsCode || "pending"}</b> — {goods.description || `Goods item ${index + 1}`}<br />Qty: {goods.quantity || "—"}</td>
+                <td>{index === 0 ? `${totals.actualKg.toFixed(2)} kg` : ""}</td>
+                <td>{index === 0 ? `${totals.cbm.toFixed(4)} m³` : ""}</td>
+              </tr>
+            ))}
         </tbody>
       </table>
       <div className="form-grid two lower">
@@ -1028,7 +1023,7 @@ function BlForm({ d, lines, boxes, divisor, houseIssuerName }: { d: FormData; li
   );
 }
 
-function FormA({ d, destination }: { d: FormData; destination: string }) {
+function FormA({ d, lines, destination }: { d: FormData; lines: Goods[]; destination: string }) {
   return (
     <div className="official-form coo-grid">
       <div className="coo-heading">
@@ -1074,22 +1069,16 @@ function FormA({ d, destination }: { d: FormData; destination: string }) {
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <td>1</td>
-            <td>As addressed</td>
-            <td>
-              {d.goods.packages}; {d.goods.description}; HS {d.goods.hsCode}
-            </td>
-            <td>{d.goods.originCriterion}</td>
-            <td>
-              {d.goods.grossWeight}; {d.goods.quantity}
-            </td>
-            <td>
-              {d.invoiceNo}
-              <br />
-              {d.invoiceDate}
-            </td>
-          </tr>
+          {lines.map((goods, index) => (
+            <tr key={index}>
+              <td>{index + 1}</td>
+              <td>As addressed</td>
+              <td>{goods.packages}; {goods.description}; HS {goods.hsCode}</td>
+              <td>{goods.originCriterion}</td>
+              <td>{goods.grossWeight}; {goods.quantity}</td>
+              <td>{d.invoiceNo}<br />{d.invoiceDate}</td>
+            </tr>
+          ))}
         </tbody>
       </table>
       <div className="form-grid two declarations">
@@ -1113,7 +1102,7 @@ function FormA({ d, destination }: { d: FormData; destination: string }) {
   );
 }
 
-function StatementOrigin({ d, kind }: { d: FormData; kind: "UK" | "EU" }) {
+function StatementOrigin({ d, lines, kind }: { d: FormData; lines: Goods[]; kind: "UK" | "EU" }) {
   let uk = kind === "UK";
   return (
     <div className="official-form statement-form">
@@ -1168,24 +1157,16 @@ function StatementOrigin({ d, kind }: { d: FormData; kind: "UK" | "EU" }) {
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <td>{d.goods.description}</td>
-            <td>{d.goods.hsCode}</td>
-            <td>
-              {d.goods.packages}
-              <br />
-              {d.goods.quantity}
-            </td>
-            <td>
-              {d.goods.netWeight}
-              <br />
-              {d.goods.grossWeight}
-            </td>
-            <td>Nepal</td>
-            <td>
-              {d.currency} {d.invoiceValue}
-            </td>
-          </tr>
+          {lines.map((goods, index) => (
+            <tr key={index}>
+              <td>{goods.description}</td>
+              <td>{goods.hsCode}</td>
+              <td>{goods.packages}<br />{goods.quantity}</td>
+              <td>{goods.netWeight}<br />{goods.grossWeight}</td>
+              <td>Nepal</td>
+              <td>{goods.lineValue ? `${d.currency} ${goods.lineValue}` : "—"}</td>
+            </tr>
+          ))}
         </tbody>
       </table>
       <div className="origin-statement">
@@ -1200,8 +1181,8 @@ function StatementOrigin({ d, kind }: { d: FormData; kind: "UK" | "EU" }) {
             identification No. __________) declares that, except where otherwise
             clearly indicated, these products are of NEPAL preferential origin
             in accordance with the rules of origin of the Developing Countries
-            Trading Scheme of the UK and that the origin criterion met is{" "}
-            {d.goods.originCriterion}.
+            Trading Scheme of the UK. The origin criteria are{" "}
+            {lines.map((goods, index) => `item ${index + 1}: ${goods.originCriterion || "pending"}`).join("; ")}.
           </p>
         ) : (
           <p>
@@ -1209,8 +1190,8 @@ function StatementOrigin({ d, kind }: { d: FormData; kind: "UK" | "EU" }) {
             this document declares that, except where otherwise clearly
             indicated, these products are of NEPAL preferential origin according
             to rules of origin of the Generalised System of Preferences of the
-            European Union and that the origin criterion met is{" "}
-            {d.goods.originCriterion}.
+            European Union. The origin criteria are{" "}
+            {lines.map((goods, index) => `item ${index + 1}: ${goods.originCriterion || "pending"}`).join("; ")}.
           </p>
         )}
         <div className="sign-line">
@@ -1221,7 +1202,7 @@ function StatementOrigin({ d, kind }: { d: FormData; kind: "UK" | "EU" }) {
   );
 }
 
-function TreatyCoo({ d, kind }: { d: FormData; kind: "IN" | "CN" }) {
+function TreatyCoo({ d, lines, kind }: { d: FormData; lines: Goods[]; kind: "IN" | "CN" }) {
   let india = kind === "IN";
   return (
     <div className="official-form coo-grid treaty">
@@ -1288,23 +1269,17 @@ function TreatyCoo({ d, kind }: { d: FormData; kind: "IN" | "CN" }) {
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <td>1</td>
-            <td>{d.goods.packages}</td>
-            <td>{d.goods.description}</td>
-            <td>{d.goods.hsCode}</td>
-            <td>{d.goods.originCriterion}</td>
-            <td>
-              {d.goods.quantity}
-              <br />
-              {d.goods.grossWeight}
-            </td>
-            <td>
-              {d.invoiceNo}
-              <br />
-              {d.invoiceDate}
-            </td>
-          </tr>
+          {lines.map((goods, index) => (
+            <tr key={index}>
+              <td>{index + 1}</td>
+              <td>{goods.packages}</td>
+              <td>{goods.description}</td>
+              <td>{goods.hsCode}</td>
+              <td>{goods.originCriterion}</td>
+              <td>{goods.quantity}<br />{goods.grossWeight}</td>
+              <td>{d.invoiceNo}<br />{d.invoiceDate}</td>
+            </tr>
+          ))}
         </tbody>
       </table>
       <div className="form-grid two declarations">
@@ -1339,7 +1314,7 @@ function TreatyCoo({ d, kind }: { d: FormData; kind: "IN" | "CN" }) {
   );
 }
 
-function OrdinaryCoo({ d, destination }: { d: FormData; destination: string }) {
+function OrdinaryCoo({ d, lines, destination }: { d: FormData; lines: Goods[]; destination: string }) {
   return (
     <div className="official-form ordinary-coo">
       <div className="ordinary-head">
@@ -1396,17 +1371,15 @@ function OrdinaryCoo({ d, destination }: { d: FormData; destination: string }) {
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <td>As addressed</td>
-            <td>{d.goods.packages}</td>
-            <td>{d.goods.description}</td>
-            <td>{d.goods.hsCode}</td>
-            <td>
-              {d.goods.quantity}
-              <br />
-              {d.goods.grossWeight}
-            </td>
-          </tr>
+          {lines.map((goods, index) => (
+            <tr key={index}>
+              <td>As addressed</td>
+              <td>{goods.packages}</td>
+              <td>{goods.description}</td>
+              <td>{goods.hsCode}</td>
+              <td>{goods.quantity}<br />{goods.grossWeight}</td>
+            </tr>
+          ))}
         </tbody>
       </table>
       <div className="cert-text">
@@ -1491,7 +1464,7 @@ function CommercialInvoice({ d, lines }: { d: FormData; lines: Goods[] }) {
               <td>{g.quantity}</td>
               <td>{g.netWeight}</td>
               <td>{g.grossWeight}</td>
-              <td>{i === 0 ? `${d.currency} ${d.invoiceValue}` : "—"}</td>
+              <td>{g.lineValue ? `${d.currency} ${g.lineValue}` : "—"}</td>
             </tr>
           ))}
         </tbody>
@@ -1532,6 +1505,11 @@ function PackingList({
   const totalActual = boxes.reduce((s, b) => s + b.actualWeightKg, 0);
   const totalVol = metrics.reduce((s, m) => s + m.volumetricKg, 0);
   const perBoxChargeable = metrics.reduce((s, m) => s + m.chargeableKg, 0);
+  const boxNetWeight = (box: PackingBox) => lines.reduce((sum, line, index) => {
+    const quantity = numeric(line.quantity);
+    if (quantity <= 0) return sum;
+    return sum + numeric(line.netWeight) * (box.allocations[index] || 0) / quantity;
+  }, 0);
   return (
     <div className="official-form packing-form">
       <div className="invoice-head">
@@ -1574,6 +1552,11 @@ function PackingList({
           </tr>
         </thead>
         <tbody>
+          {boxes.length === 0 && (
+            <tr>
+              <td colSpan={8}>No packing boxes recorded. Complete the box allocation before printing this list.</td>
+            </tr>
+          )}
           {boxes.map((box, i) => (
             <tr key={box.id}>
               <td>
@@ -1598,7 +1581,7 @@ function PackingList({
               <td>
                 {Object.values(box.allocations).reduce((s, q) => s + q, 0)}
               </td>
-              <td>—</td>
+              <td>{boxNetWeight(box).toFixed(2)} kg</td>
               <td>{box.actualWeightKg.toFixed(2)} kg</td>
               <td>
                 {box.lengthCm} × {box.widthCm} × {box.heightCm} cm
@@ -1863,7 +1846,11 @@ function App() {
 
     const storedData = readWorkspaceStorage<Partial<FormData> | null>(organisationId, "shipment", null);
     const storedOrganisation = readWorkspaceStorage<Partial<typeof organisation> | null>(organisationId, "organisation", null);
-    setData({ ...initial, ...(storedData || {}) });
+    setData({
+      ...initial,
+      ...(storedData || {}),
+      goods: { ...initial.goods, ...(storedData?.goods || {}) },
+    });
     setStatus(readWorkspaceStorage<ShipmentStatus>(organisationId, "status", "DRAFT"));
     setAmendments(readWorkspaceStorage<Amendment[]>(organisationId, "amendments", []));
     setExtraGoods(readWorkspaceStorage<Goods[]>(organisationId, "goods", []));
@@ -1992,8 +1979,8 @@ function App() {
       e.push("Enter a valid exporter email address.");
     if (data.consigneeEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.consigneeEmail))
       e.push("Enter a valid consignee email address.");
-    if (!/^\d{4}(\.\d{2})?/.test(data.goods.hsCode))
-      e.push("Enter at least a 4-digit HS code.");
+    if (goodsLines.some((line) => !/^\d{4}(\.\d{2})?/.test(line.hsCode)))
+      e.push("Enter at least a 4-digit HS code for every goods line.");
     if ((doc === "MAWB" || doc === "HAWB") && !data.departure)
       e.push("Departure airport is required for air waybills.");
     if (doc === "MAWB" && data.documentNo && !mawbInspection.formatValid)
@@ -2037,12 +2024,8 @@ function App() {
       e.push(
         "Carrier was not resolved from the starter directory—select or enter it manually and verify with the issuer.",
       );
-    if (
-      doc === "COO" &&
-      rule.kind !== "ordinary" &&
-      !data.goods.originCriterion
-    )
-      e.push("Origin criterion is required for a preferential proof.");
+    if (doc === "COO" && rule.kind !== "ordinary" && goodsLines.some((line) => !line.originCriterion))
+      e.push("Origin criterion is required for every goods line on a preferential proof.");
     if ((doc === "MAWB" || doc === "HAWB" || doc === "BILL_OF_LADING" || doc === "HBL") && boxes.length === 0)
       e.push("Add packing boxes: pieces in transport documents come only from the packing record.");
     if (boxes.length > 0 && boxes.some((box) => box.actualWeightKg <= 0))
@@ -2050,6 +2033,11 @@ function App() {
     const enteredGross = goodsLines.reduce((sum, line) => sum + numeric(line.grossWeight), 0);
     if (boxes.length > 0 && enteredGross > 0 && Math.abs(enteredGross - totals.actualKg) > 0.01)
       e.push(`Goods-line gross weight (${enteredGross.toFixed(2)} kg) does not match packing actual weight (${totals.actualKg.toFixed(2)} kg). Packing weight controls MAWB/HAWB/B/L/HBL/email.`);
+    if (goodsLines.length > 1 && goodsLines.every((line) => (line.lineValue || "").trim()) && data.invoiceValue) {
+      const lineValueTotal = goodsLines.reduce((sum, line) => sum + numeric(line.lineValue || "0"), 0);
+      if (Math.abs(lineValueTotal - numeric(data.invoiceValue)) > 0.01)
+        e.push(`Goods-line values total ${lineValueTotal.toFixed(2)} ${data.currency}; reconcile them with the invoice total ${numeric(data.invoiceValue).toFixed(2)} ${data.currency}.`);
+    }
     return e;
   }, [data, doc, rule, boxes, extraGoods, airDivisor, totals.actualKg, houseIssuerName, houseBlIssuerName, mawbInspection.formatValid, mawbInspection.checkDigitValid, mawbInspection.expectedCheckDigit, mawbInspection.digits]);
   const set = (k: keyof FormData, v: string) =>
@@ -2106,6 +2094,7 @@ function App() {
         botanicalName: "",
         hsCode: "",
         packages: "",
+        lineValue: "",
         grossWeight: "",
         netWeight: "",
         quantity: "",
@@ -2353,10 +2342,10 @@ function App() {
       ["Exporter", `${data.exporterName}\n${data.exporterAddress}`],
       ["Consignee", `${data.consigneeName}\n${data.consigneeAddress}`],
       ...rows,
-      [
-        "Goods",
-        `${data.goods.description}; HS ${data.goods.hsCode}; ${data.goods.packages}; gross ${data.goods.grossWeight}`,
-      ],
+      ...goodsLines.map((goods, index) => [
+        `Goods item ${index + 1}`,
+        `${goods.description}; HS ${goods.hsCode}; ${goods.packages}; quantity ${goods.quantity}; gross ${goods.grossWeight}; net ${goods.netWeight}; line value ${goods.lineValue ? `${data.currency} ${goods.lineValue}` : "not entered"}`,
+      ]),
       [
         "Invoice",
         `${data.invoiceNo} dated ${data.invoiceDate}; ${data.currency} ${data.invoiceValue}`,
@@ -2410,6 +2399,12 @@ function App() {
       `${doc.toLowerCase()}-${activeDocumentNo || data.invoiceNo}.docx`,
     );
   }
+  const printDocument = () => {
+    const cleanup = () => document.body.classList.remove("printing-document");
+    document.body.classList.add("printing-document");
+    window.addEventListener("afterprint", cleanup, { once: true });
+    window.print();
+  };
   const saveShipmentSnapshot = (nextStatus: ShipmentStatus = status) => {
     const snapshot: SavedShipment = { id: crypto.randomUUID(), savedAt: new Date().toISOString(), status: nextStatus, data: structuredClone(data), goods: structuredClone(extraGoods), boxes: structuredClone(boxes) };
     setHistory((items) => [snapshot, ...items]);
@@ -3238,6 +3233,7 @@ function App() {
                         ["Description", "description"],
                         ["Botanical name", "botanicalName"],
                         ["Packages", "packages"],
+                        ["Line value", "lineValue"],
                         ["Quantity", "quantity"],
                         ["Gross weight", "grossWeight"],
                         ["Net weight", "netWeight"],
@@ -3255,7 +3251,7 @@ function App() {
                         {l}
                         <input
                           disabled={locked}
-                          value={line[k]}
+                          value={line[k] || ""}
                           onChange={(e) =>
                             index === 0
                               ? setGood(k, e.target.value)
@@ -3610,21 +3606,21 @@ function App() {
               ) : doc === "PHYTOSANITARY" ? (
                 <PhytosanitaryCertificate d={data} lines={goodsLines} />
               ) : data.country === "UK" ? (
-                <StatementOrigin d={data} kind="UK" />
+                <StatementOrigin d={data} lines={goodsLines} kind="UK" />
               ) : data.country === "EU" ? (
-                <StatementOrigin d={data} kind="EU" />
+                <StatementOrigin d={data} lines={goodsLines} kind="EU" />
               ) : data.country === "CA" || data.country === "AU" ? (
-                <FormA d={data} destination={rule.name} />
+                <FormA d={data} lines={goodsLines} destination={rule.name} />
               ) : data.country === "IN" ? (
-                <TreatyCoo d={data} kind="IN" />
+                <TreatyCoo d={data} lines={goodsLines} kind="IN" />
               ) : data.country === "CN" ? (
-                <TreatyCoo d={data} kind="CN" />
+                <TreatyCoo d={data} lines={goodsLines} kind="CN" />
               ) : (
-                <OrdinaryCoo d={data} destination={rule.name} />
+                <OrdinaryCoo d={data} lines={goodsLines} destination={rule.name} />
               )}
             </article>
             <label className="notes">
-              Manual notes (included in DOCX)
+              Manual notes (included in DOCX summary)
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
@@ -3635,19 +3631,20 @@ function App() {
               <div>
                 <Sparkles size={18} />
                 <span>
-                  <b>Ready for authority/carrier review</b>
+                  <b>Print the selected document</b>
                   <small>
-                    Layout follows the applicable document family; official
-                    serials, carrier terms, signatures and stamps remain
-                    controlled by the issuer.
+                    The selected A4 draft prints by itself. Use 100% scale for
+                    best layout fidelity; use an issuer-provided form wherever
+                    the carrier or authority requires its own template. DOCX
+                    is an editable data summary, not a print-layout replica.
                   </small>
                 </span>
               </div>
-              <button onClick={() => window.print()}>
-                <Download size={17} /> PDF
+              <button onClick={printDocument}>
+                <Download size={17} /> Print / Save PDF
               </button>
               <button className="primary" onClick={exportDocx}>
-                <Download size={17} /> DOCX
+                <Download size={17} /> Data summary DOCX
               </button>
             </div>
           </div>
